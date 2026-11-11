@@ -37,6 +37,14 @@ export class OrdersController {
     return this.orders.checkout(user, id, body);
   }
 
+  /** A star rating and an optional comment, once per delivered order. */
+  @Post(':id/feedback')
+  @HttpCode(201)
+  @Roles('CUSTOMER')
+  feedback(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() body: unknown) {
+    return this.orders.leaveFeedback(user, id, body);
+  }
+
   @Patch(':id/status')
   @Roles('KITCHEN')
   changeStatus(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() body: { status?: unknown }) {

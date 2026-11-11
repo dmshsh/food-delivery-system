@@ -6,8 +6,8 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
-    "test": "node --test --experimental-strip-types test/domain.test.ts test/db-rules.test.ts",
-    "test:e2e": "node test/e2e.mjs"
+    "test": "node --test --experimental-strip-types test/domain.test.ts test/bonus.test.ts test/security.test.ts test/features.test.ts test/db-rules.test.ts",
+    "test:e2e": "node test/e2e.mjs && node test/e2e-features.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",

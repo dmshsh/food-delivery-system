@@ -5,12 +5,15 @@ import { DbService } from '../db/db.service';
 export class MenuController {
   constructor(private readonly db: DbService) {}
 
-  /** The menu is public: guests can browse before signing in. */
+  /**
+   * The menu is public: guests can browse before signing in.
+   * `sort_order` is the arrangement the admin made by dragging the dishes around.
+   */
   @Get()
   async list() {
     const { rows } = await this.db.pool.query(
-      `SELECT id, name, description, category, price_tiyn AS "priceTiyn"
-       FROM menu_items WHERE available ORDER BY category, id`,
+      `SELECT id, name, description, category, price_tiyn AS "priceTiyn", sort_order AS "sortOrder"
+       FROM menu_items WHERE available ORDER BY sort_order, id`,
     );
     return { items: rows };
   }
