@@ -4,6 +4,7 @@ import { Request, Response } from 'express';
 import { SecurityService } from '../security/security.service';
 import { AuthGuard } from './auth.guard';
 import { AuthService } from './auth.service';
+import { PasswordService } from './password.service';
 import { CurrentUser } from './roles.decorator';
 import { AuthUser } from './types';
 
@@ -28,6 +29,7 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly security: SecurityService,
     private readonly jwt: JwtService,
+    private readonly passwords: PasswordService,
   ) {}
 
   @Post('register')
@@ -70,5 +72,46 @@ export class AuthController {
   @UseGuards(AuthGuard)
   async me(@CurrentUser() user: AuthUser) {
     return { user, profile: await this.auth.profile(user) };
+  }
+
+  // ------------------------------------------------------------- passwords
+
+  /**
+   * "I forgot my password." Always answers the same way, whether or not the
+   * address belongs to an account, so the form cannot be used to find out who
+   * has one.
+   */
+  @Post('password/forgot')
+  @HttpCode(200)
+  forgot(@Body() body: unknown, @Req() req: Request) {
+    return this.passwords.forgot(body, clientIp(req), process.env.NODE_ENV === 'production');
+  }
+
+  /** Setting a new password from a reset link. The link works once. */
+  @Post('password/reset')
+  @HttpCode(200)
+  async reset(@Body() body: unknown, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const result = await this.passwords.reset(body, clientIp(req));
+    // Whatever session this browser had is now stale, so its cookie goes too.
+    res.clearCookie('token', { ...COOKIE, maxAge: undefined });
+    return result;
+  }
+
+  /** Changing a password while signed in. */
+  @Post('password/change')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  async change(
+    @CurrentUser() user: AuthUser,
+    @Body() body: unknown,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.passwords.change(user, body, clientIp(req));
+    // Every token issued before this moment is refused from now on, including the
+    // one in this browser, so a fresh one is issued to keep this session alive.
+    const token = await this.auth.reissue(user);
+    res.cookie('token', token, COOKIE);
+    return result;
   }
 }

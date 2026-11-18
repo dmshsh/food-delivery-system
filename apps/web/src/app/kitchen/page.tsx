@@ -3,23 +3,25 @@
 import { useState } from 'react';
 import RequireRole from '@/components/RequireRole';
 import StatusBadge from '@/components/StatusBadge';
-import { errorMessage, formatDateTime, formatDelivery } from '@/lib/format';
+import { useI18n } from '@/i18n/I18nProvider';
+import type { MessageKey } from '@/i18n/dictionaries';
+import { formatDateTime, translateError } from '@/lib/format';
 import { readDragPayload, setDragPayload } from '@/lib/dnd';
 import type { Order, OrderStatus } from '@/lib/types';
 import { useOrdersQuery, useSetStatusMutation } from '@/store/api';
 
 // The only step the kitchen may take from each status (the server enforces this too).
-const NEXT: Partial<Record<OrderStatus, { to: OrderStatus; label: string }>> = {
-  CONFIRMED: { to: 'PREPARING', label: 'Start preparing' },
-  PREPARING: { to: 'READY', label: 'Mark ready' },
-  READY: { to: 'DELIVERED', label: 'Mark delivered' },
+const NEXT: Partial<Record<OrderStatus, { to: OrderStatus; label: MessageKey }>> = {
+  CONFIRMED: { to: 'PREPARING', label: 'kitchen.startPreparing' },
+  PREPARING: { to: 'READY', label: 'kitchen.markReady' },
+  READY: { to: 'DELIVERED', label: 'kitchen.markDelivered' },
 };
 
-const COLUMNS: { status: OrderStatus; title: string; hint: string }[] = [
-  { status: 'CONFIRMED', title: 'New', hint: 'Paid and waiting to be started' },
-  { status: 'PREPARING', title: 'Preparing', hint: 'Being cooked right now' },
-  { status: 'READY', title: 'Ready for pickup', hint: 'Waiting for the courier' },
-  { status: 'DELIVERED', title: 'Delivered', hint: 'Finished today' },
+const COLUMNS: { status: OrderStatus; title: MessageKey; hint: MessageKey }[] = [
+  { status: 'CONFIRMED', title: 'kitchen.new', hint: 'kitchen.hintNew' },
+  { status: 'PREPARING', title: 'kitchen.preparing', hint: 'kitchen.hintPreparing' },
+  { status: 'READY', title: 'kitchen.ready', hint: 'kitchen.hintReady' },
+  { status: 'DELIVERED', title: 'kitchen.delivered', hint: 'kitchen.hintDelivered' },
 ];
 
 export default function KitchenPage() {
@@ -31,6 +33,7 @@ export default function KitchenPage() {
 }
 
 function Kitchen() {
+  const { t, lang } = useI18n();
   const { data, isLoading, error } = useOrdersQuery(undefined, { pollingInterval: 5000 });
   const [setStatus, { isLoading: saving }] = useSetStatusMutation();
   const [message, setMessage] = useState('');
@@ -42,13 +45,14 @@ function Kitchen() {
   async function move(order: Order, target: OrderStatus) {
     setMessage('');
     if (NEXT[order.status]?.to !== target) {
-      setMessage(`Order #${order.id} can only move to “${COLUMNS.find((c) => c.status === NEXT[order.status]?.to)?.title ?? 'the next step'}”.`);
+      const column = COLUMNS.find((c) => c.status === NEXT[order.status]?.to);
+      setMessage(t('kitchen.onlyNext', { id: order.id, column: column ? t(column.title) : '—' }));
       return;
     }
     try {
       await setStatus({ id: order.id, status: target }).unwrap();
     } catch (e) {
-      setMessage(`Order #${order.id}: ${errorMessage(e)}`);
+      setMessage(`#${order.id}: ${translateError(e, t)}`);
     }
   }
 
@@ -59,18 +63,18 @@ function Kitchen() {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold">Kitchen queue</h1>
-      <p className="mt-1 text-sm text-stone-600">
-        Paid orders, oldest first. Drag a card to the next column, or use the button on the card. The page refreshes
-        every few seconds.
-      </p>
-      {isLoading && <p className="mt-4 text-stone-500">Loading…</p>}
-      {error != null && <p role="alert" className="mt-4 text-red-700">{errorMessage(error)}</p>}
+      <h1 className="text-2xl font-semibold">{t('kitchen.title')}</h1>
+      <p className="mt-1 text-sm text-stone-600">{t('kitchen.subtitle')}</p>
+      {isLoading && <p className="mt-4 text-stone-500">{t('common.loading')}</p>}
+      {error != null && <p role="alert" className="mt-4 text-red-700">{translateError(error, t)}</p>}
       {message && (
-        <p role="alert" className="mt-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">{message}</p>
+        <p role="alert" className="mt-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+          {message}
+        </p>
       )}
 
-      <div className="mt-5 grid gap-4 md:grid-cols-4">
+      {/* One column per status on a phone, four side by side from a wide screen up. */}
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {COLUMNS.map((col) => {
           const list = orders.filter((o) => o.status === col.status);
           // While a card is in the air, only the one column it may land in stays open.
@@ -106,15 +110,16 @@ function Kitchen() {
               }`}
             >
               <h2 id={`col-${col.status}`} className="mb-1 font-medium">
-                {col.title} <span className="text-stone-500">({list.length})</span>
+                {t(col.title)} <span className="text-stone-500">({list.length})</span>
               </h2>
-              <p className="mb-2 text-xs text-stone-500">{col.hint}</p>
+              <p className="mb-2 text-xs text-stone-500">{t(col.hint)}</p>
               <ul className="space-y-3">
-                {list.length === 0 && <li className="text-sm text-stone-500">Nothing here.</li>}
+                {list.length === 0 && <li className="text-sm text-stone-500">{t('kitchen.nothing')}</li>}
                 {list.map((o) => (
                   <li
                     key={o.id}
                     draggable={Boolean(NEXT[o.status])}
+                    aria-label={NEXT[o.status] ? t('kitchen.dragHint', { id: o.id }) : undefined}
                     onDragStart={(e) => {
                       setDragPayload(e, o.id);
                       setDragging(o);
@@ -132,19 +137,23 @@ function Kitchen() {
                       <StatusBadge status={o.status} />
                     </div>
                     <p className="mt-1 text-xs text-stone-500">
-                      Paid {formatDateTime(o.createdAt)} · Deliver: {formatDelivery(o.deliveryTime)}
+                      {t('kitchen.paid', { date: formatDateTime(o.createdAt, lang) })} ·{' '}
+                      {o.deliveryTime ? formatDateTime(o.deliveryTime, lang) : t('checkout.asap')}
                     </p>
                     <ul className="mt-2 text-sm">
                       {o.items.map((i) => (
-                        <li key={i.itemId}><strong>{i.quantity}</strong> × {i.name}</li>
+                        <li key={i.itemId}>
+                          <strong>{i.quantity}</strong> × {i.name}
+                        </li>
                       ))}
                     </ul>
-                    {o.notes && <p className="mt-2 rounded bg-amber-50 p-2 text-sm">Note: {o.notes}</p>}
+                    {o.notes && <p className="mt-2 rounded bg-amber-50 p-2 text-sm">{t('kitchen.note', { text: o.notes })}</p>}
                     {NEXT[o.status] && (
-                      // The button is not a fallback for nicety: dragging is impossible with a
-                      // keyboard or a screen reader, and the kitchen still has to work there.
+                      // The button is not there for niceness: dragging is impossible
+                      // with a keyboard or a touch screen, and the kitchen still has
+                      // to work on both.
                       <button className="btn-primary mt-3 w-full" disabled={saving} onClick={() => advance(o)}>
-                        {NEXT[o.status]?.label}
+                        {t(NEXT[o.status]!.label)}
                       </button>
                     )}
                   </li>

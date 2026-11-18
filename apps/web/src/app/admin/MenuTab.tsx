@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { errorMessage, formatKzt } from '@/lib/format';
+import { useI18n } from '@/i18n/I18nProvider';
+import { formatKzt, translateError } from '@/lib/format';
 import { readDragPayload, reorder, setDragPayload } from '@/lib/dnd';
 import type { AdminMenuItem, MenuItemBody } from '@/lib/types';
 import {
@@ -15,6 +16,7 @@ import {
 const EMPTY: MenuItemBody = { name: '', description: '', category: 'Meals', priceTiyn: 0, available: true };
 
 export default function MenuTab() {
+  const { t, lang } = useI18n();
   const { data, isLoading, error } = useAdminMenuQuery();
   const [reorderMenu, { isLoading: saving }] = useReorderMenuMutation();
   const [removeDish] = useRemoveDishMutation();
@@ -40,7 +42,7 @@ export default function MenuTab() {
       await reorderMenu(next.map((i) => i.id)).unwrap();
     } catch (e) {
       setItems(previous); // put the list back the way it was
-      setMessage(errorMessage(e));
+      setMessage(translateError(e, t));
     }
   }
 
@@ -54,29 +56,23 @@ export default function MenuTab() {
     setMessage('');
     try {
       const result = await removeDish(item.id).unwrap();
-      setMessage(
-        result.hidden
-          ? `“${item.name}” appears in past orders, so it was hidden from the menu instead of deleted.`
-          : `“${item.name}” was deleted.`,
-      );
+      setMessage(result.hidden ? t('admin.dishHidden', { name: item.name }) : t('admin.dishDeleted', { name: item.name }));
     } catch (e) {
-      setMessage(errorMessage(e));
+      setMessage(translateError(e, t));
     }
   }
 
-  if (isLoading) return <p className="text-stone-500">Loading…</p>;
-  if (error != null) return <p role="alert" className="text-red-700">{errorMessage(error)}</p>;
+  if (isLoading) return <p className="text-stone-500">{t('common.loading')}</p>;
+  if (error != null) return <p role="alert" className="text-red-700">{translateError(error, t)}</p>;
 
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-medium">Menu</h2>
-          <p className="text-sm text-stone-600">
-            Drag a dish by its handle to change the order customers see, or use the arrow buttons.
-          </p>
+          <h2 className="text-lg font-medium">{t('common.menu')}</h2>
+          <p className="text-sm text-stone-600">{t('admin.menuHint')}</p>
         </div>
-        <button className="btn-primary" onClick={() => setEditing('new')}>Add a dish</button>
+        <button className="btn-primary" onClick={() => setEditing('new')}>{t('admin.addDish')}</button>
       </div>
 
       {message && (
@@ -84,11 +80,7 @@ export default function MenuTab() {
       )}
 
       {editing && (
-        <DishForm
-          item={editing === 'new' ? null : editing}
-          onClose={() => setEditing(null)}
-          onMessage={setMessage}
-        />
+        <DishForm item={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onMessage={setMessage} />
       )}
 
       <ul className="mt-4 space-y-2">
@@ -109,11 +101,9 @@ export default function MenuTab() {
               setOverIndex(null);
               if (from >= 0 && from !== index) void persist(reorder(items, from, index));
             }}
-            className={`card flex flex-wrap items-center gap-3 transition ${
-              dragIndex === index ? 'opacity-50' : ''
-            } ${overIndex === index && dragIndex !== index ? 'border-emerald-500 ring-2 ring-emerald-200' : ''} ${
-              item.available ? '' : 'bg-stone-50'
-            }`}
+            className={`card flex flex-wrap items-center gap-3 transition ${dragIndex === index ? 'opacity-50' : ''} ${
+              overIndex === index && dragIndex !== index ? 'border-emerald-500 ring-2 ring-emerald-200' : ''
+            } ${item.available ? '' : 'bg-stone-50'}`}
           >
             <span
               draggable
@@ -126,8 +116,8 @@ export default function MenuTab() {
                 setOverIndex(null);
               }}
               role="button"
-              aria-label={`Drag ${item.name} to reorder`}
-              title="Drag to reorder"
+              aria-label={t('admin.dragToReorder', { name: item.name })}
+              title={t('admin.dragToReorder', { name: item.name })}
               className="cursor-grab select-none px-1 text-xl leading-none text-stone-400 active:cursor-grabbing"
             >
               ⠿
@@ -137,27 +127,43 @@ export default function MenuTab() {
             <div className="min-w-[12rem] flex-1">
               <p className="font-medium">
                 {item.name}
-                {!item.available && <span className="ml-2 rounded bg-stone-200 px-2 py-0.5 text-xs">hidden</span>}
+                {!item.available && (
+                  <span className="ml-2 rounded bg-stone-200 px-2 py-0.5 text-xs">{t('accounting.hidden')}</span>
+                )}
               </p>
               <p className="text-sm text-stone-600">{item.description}</p>
               <p className="text-xs text-stone-500">
-                {item.category} · ordered {item.timesOrdered} time{item.timesOrdered === 1 ? '' : 's'}
+                {item.category} · {t('admin.dishOrdered', { count: item.timesOrdered })}
               </p>
             </div>
 
-            <span className="font-medium text-emerald-800">{formatKzt(item.priceTiyn)}</span>
+            <span className="font-medium text-emerald-800">{formatKzt(item.priceTiyn, lang)}</span>
 
             <div className="flex items-center gap-1">
               {/* Dragging is impossible with a keyboard, so the same move has buttons. */}
-              <button className="btn-secondary px-2 py-1" aria-label={`Move ${item.name} up`} disabled={index === 0 || saving} onClick={() => moveBy(index, -1)}>↑</button>
-              <button className="btn-secondary px-2 py-1" aria-label={`Move ${item.name} down`} disabled={index === items.length - 1 || saving} onClick={() => moveBy(index, 1)}>↓</button>
-              <button className="btn-secondary" onClick={() => setEditing(item)}>Edit</button>
-              <button className="btn-danger" onClick={() => remove(item)}>Remove</button>
+              <button
+                className="btn-secondary px-3 py-1"
+                aria-label={t('admin.moveUp', { name: item.name })}
+                disabled={index === 0 || saving}
+                onClick={() => moveBy(index, -1)}
+              >
+                ↑
+              </button>
+              <button
+                className="btn-secondary px-3 py-1"
+                aria-label={t('admin.moveDown', { name: item.name })}
+                disabled={index === items.length - 1 || saving}
+                onClick={() => moveBy(index, 1)}
+              >
+                ↓
+              </button>
+              <button className="btn-secondary" onClick={() => setEditing(item)}>{t('common.edit')}</button>
+              <button className="btn-danger" onClick={() => remove(item)}>{t('common.remove')}</button>
             </div>
           </li>
         ))}
       </ul>
-      {items.length === 0 && <p className="mt-4 text-stone-500">The menu is empty. Add the first dish.</p>}
+      {items.length === 0 && <p className="mt-4 text-stone-500">{t('admin.emptyMenu')}</p>}
     </div>
   );
 }
@@ -172,6 +178,7 @@ function DishForm({
   onClose: () => void;
   onMessage: (text: string) => void;
 }) {
+  const { t } = useI18n();
   const [createDish, create] = useCreateDishMutation();
   const [updateDish, update] = useUpdateDishMutation();
   const [form, setForm] = useState<MenuItemBody>(
@@ -194,30 +201,43 @@ function DishForm({
     try {
       if (item) {
         await updateDish({ id: item.id, ...form }).unwrap();
-        onMessage(`“${form.name}” was saved.`);
+        onMessage(t('admin.dishSaved', { name: form.name }));
       } else {
         await createDish(form).unwrap();
-        onMessage(`“${form.name}” was added to the menu.`);
+        onMessage(t('admin.dishAdded', { name: form.name }));
       }
       onClose();
     } catch (err) {
-      setError(errorMessage(err));
+      setError(translateError(err, t));
     }
   }
 
   return (
     <form onSubmit={submit} className="card mt-4 space-y-3 border-emerald-300">
-      <h3 className="font-medium">{item ? `Edit “${item.name}”` : 'New dish'}</h3>
+      <h3 className="font-medium">{item ? t('admin.editDish', { name: item.name }) : t('admin.newDish')}</h3>
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
-          <label htmlFor="dish-name" className="label">Name</label>
-          <input id="dish-name" className="input" required maxLength={80} value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          <label htmlFor="dish-name" className="label">{t('admin.dishName')}</label>
+          <input
+            id="dish-name"
+            className="input"
+            required
+            maxLength={80}
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+          />
         </div>
         <div>
-          <label htmlFor="dish-category" className="label">Category</label>
-          <input id="dish-category" className="input" required maxLength={40} list="categories" value={form.category}
-            onChange={(e) => setForm({ ...form, category: e.target.value })} />
+          <label htmlFor="dish-category" className="label">{t('admin.dishCategory')}</label>
+          <input
+            id="dish-category"
+            className="input"
+            required
+            maxLength={40}
+            list="categories"
+            value={form.category}
+            onChange={(e) => setForm({ ...form, category: e.target.value })}
+          />
           <datalist id="categories">
             <option value="Meals" />
             <option value="Drinks" />
@@ -226,28 +246,46 @@ function DishForm({
         </div>
       </div>
       <div>
-        <label htmlFor="dish-description" className="label">Description</label>
-        <textarea id="dish-description" rows={2} className="input" required maxLength={300} value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        <label htmlFor="dish-description" className="label">{t('admin.dishDescription')}</label>
+        <textarea
+          id="dish-description"
+          rows={2}
+          className="input"
+          required
+          maxLength={300}
+          value={form.description}
+          onChange={(e) => setForm({ ...form, description: e.target.value })}
+        />
       </div>
       <div className="flex flex-wrap items-end gap-4">
         <div>
           {/* Prices are entered in KZT but stored as whole tiyn, so no cent ever rounds away. */}
-          <label htmlFor="dish-price" className="label">Price, KZT</label>
-          <input id="dish-price" type="number" className="input w-40" min={0} step="0.01" required
+          <label htmlFor="dish-price" className="label">{t('admin.dishPrice')}</label>
+          <input
+            id="dish-price"
+            type="number"
+            inputMode="decimal"
+            className="input w-40"
+            min={0}
+            step="0.01"
+            required
             value={form.priceTiyn / 100}
-            onChange={(e) => setForm({ ...form, priceTiyn: Math.round(Number(e.target.value) * 100) })} />
+            onChange={(e) => setForm({ ...form, priceTiyn: Math.round(Number(e.target.value) * 100) })}
+          />
         </div>
         <label className="flex items-center gap-2 pb-2 text-sm">
-          <input type="checkbox" checked={form.available}
-            onChange={(e) => setForm({ ...form, available: e.target.checked })} />
-          Shown on the menu
+          <input
+            type="checkbox"
+            checked={form.available}
+            onChange={(e) => setForm({ ...form, available: e.target.checked })}
+          />
+          {t('admin.dishShown')}
         </label>
       </div>
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       <div className="flex gap-2">
-        <button className="btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
-        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn-primary" disabled={busy}>{busy ? t('common.saving') : t('common.save')}</button>
+        <button type="button" className="btn-secondary" onClick={onClose}>{t('common.cancel')}</button>
       </div>
     </form>
   );

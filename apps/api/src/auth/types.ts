@@ -11,4 +11,6 @@ export interface AuthUser {
   email: string;
   fullName: string;
   role: Role;
+  /** The language this person reads the site in: 'en' | 'ru' | 'kk'. */
+  language: string;
 }

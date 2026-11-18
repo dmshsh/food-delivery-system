@@ -153,3 +153,100 @@ test('bonus history cannot lie: earning adds points and spending takes them away
     dropScratch(email);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Week 3: uniqueness, the language column, reset links and blocked addresses.
+// ---------------------------------------------------------------------------
+
+test('one phone number belongs to one customer, however it is written', { skip }, () => {
+  const a = 'dbrules-phone-a@test.local';
+  const b = 'dbrules-phone-b@test.local';
+  dropScratch(a);
+  dropScratch(b);
+  const first = scratchCustomer(a);
+  try {
+    assert.equal(psql(`UPDATE customers SET phone = '+7 700 555 11 22' WHERE id = ${first}`).ok, true);
+
+    // The same number, punctuated differently, must still be refused.
+    psql(`INSERT INTO users(email,password_hash,full_name,role) VALUES ('${b}','x','Scratch','CUSTOMER')`);
+    const clash = psql(
+      `INSERT INTO customers(user_id,phone,address) SELECT id,'77005551122','x' FROM users WHERE email='${b}'`,
+    );
+    assert.equal(clash.ok, false, 'the same digits were accepted twice');
+    assert.match(clash.out, /duplicate key|unique/i);
+
+    // A different number is fine.
+    assert.equal(
+      psql(`INSERT INTO customers(user_id,phone,address) SELECT id,'+7 700 555 11 23','x' FROM users WHERE email='${b}'`).ok,
+      true,
+    );
+  } finally {
+    dropScratch(a);
+    dropScratch(b);
+  }
+});
+
+test('two dishes cannot share a name, whatever the capitalisation or spacing', { skip }, () => {
+  psql(`DELETE FROM menu_items WHERE name ILIKE 'dbrules dish%'`);
+  try {
+    const insert = (name: string) =>
+      psql(`INSERT INTO menu_items(name,description,category,price_tiyn) VALUES ('${name}','d','c',1000)`);
+    assert.equal(insert('DbRules Dish').ok, true);
+    assert.equal(insert('dbrules dish').ok, false, 'the same name in lower case was accepted');
+    assert.equal(insert('  DbRules Dish  ').ok, false, 'the same name with spaces around it was accepted');
+    assert.equal(insert('DbRules Dish Two').ok, true);
+  } finally {
+    psql(`DELETE FROM menu_items WHERE name ILIKE '%dbrules dish%'`);
+  }
+});
+
+test('the language column accepts only the three the site speaks', { skip }, () => {
+  const email = 'dbrules-lang@test.local';
+  dropScratch(email);
+  psql(`INSERT INTO users(email,password_hash,full_name,role) VALUES ('${email}','x','Scratch','CUSTOMER')`);
+  try {
+    for (const code of ['en', 'ru', 'kk']) {
+      assert.equal(psql(`UPDATE users SET preferred_language='${code}' WHERE email='${email}'`).ok, true, code);
+    }
+    assert.equal(psql(`UPDATE users SET preferred_language='fr' WHERE email='${email}'`).ok, false);
+    // New accounts start in English rather than with nothing.
+    assert.equal(psql(`SELECT preferred_language FROM users WHERE email='${email}'`).out, 'kk');
+  } finally {
+    psql(`DELETE FROM users WHERE email='${email}'`);
+  }
+});
+
+test('a reset link is stored once, as a hash, and never twice', { skip }, () => {
+  const email = 'dbrules-reset@test.local';
+  dropScratch(email);
+  psql(`INSERT INTO users(email,password_hash,full_name,role) VALUES ('${email}','x','Scratch','CUSTOMER')`);
+  const userId = psql(`SELECT id FROM users WHERE email='${email}'`).out;
+  try {
+    const insert = (hash: string) =>
+      psql(`INSERT INTO password_resets(user_id,token_hash,expires_at) VALUES (${userId},'${hash}',now() + interval '30 minutes')`);
+    assert.equal(insert('hash-aaa').ok, true);
+    assert.equal(insert('hash-aaa').ok, false, 'the same token hash was stored twice');
+    assert.match(insert('hash-aaa').out, /duplicate key|unique/i);
+    assert.equal(insert('hash-bbb').ok, true);
+
+    // Deleting the account takes its links with it: a link must never outlive its owner.
+    psql(`DELETE FROM users WHERE email='${email}'`);
+    assert.equal(psql(`SELECT count(*) FROM password_resets WHERE user_id=${userId}`).out, '0');
+  } finally {
+    psql(`DELETE FROM users WHERE email='${email}'`);
+  }
+});
+
+test('an address can be blocked only once, and never with a negative failure count', { skip }, () => {
+  const ip = '198.51.100.77';
+  psql(`DELETE FROM blocked_ips WHERE ip='${ip}'`);
+  try {
+    assert.equal(psql(`INSERT INTO blocked_ips(ip,reason,failures) VALUES ('${ip}','test',15)`).ok, true);
+    const twice = psql(`INSERT INTO blocked_ips(ip,reason,failures) VALUES ('${ip}','again',16)`);
+    assert.equal(twice.ok, false);
+    assert.match(twice.out, /duplicate key|unique/i);
+    assert.equal(psql(`UPDATE blocked_ips SET failures = -1 WHERE ip='${ip}'`).ok, false);
+  } finally {
+    psql(`DELETE FROM blocked_ips WHERE ip='${ip}'`);
+  }
+});

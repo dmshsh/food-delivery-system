@@ -1,6 +1,6 @@
 # Food Delivery System — Test Report
 
-**Report date:** 11 November 2026
+**Report date:** 19 November 2026
 **Subject:** the test set for the second delivery (drag and drop, bonus points, feedback, admin panel,
 sign-in security), together with the first delivery's tests, which were re-run to prove nothing broke.
 
@@ -10,17 +10,18 @@ sign-in security), together with the first delivery's tests, which were re-run t
 
 | Suite | What it proves | Checks | Result |
 |---|---|---|---|
-| Unit (`npm test`) | The rules themselves, as pure functions with no database and no framework | 33 | **all pass** |
-| Database (`npm test` with `DATABASE_URL`) | That a real PostgreSQL refuses bad data on its own | 7 | **all pass** |
+| Unit (`npm test`) | The rules themselves, as pure functions with no database and no framework | 65 | **all pass** |
+| Database (`npm test` with `DATABASE_URL`) | That a real PostgreSQL refuses bad data on its own | 12 | **all pass** |
 | End-to-end, first delivery (`node test/e2e.mjs`) | Ordering, payment, roles and accounting over HTTP | 15 | **all pass** |
-| End-to-end, second delivery (`node test/e2e-features.mjs`) | The new features over HTTP | 27 | **all pass** |
-| **Total** | | **82** | **82 pass, 0 fail** |
+| End-to-end, second delivery (`node test/e2e-features.mjs`) | Drag and drop, bonus points, feedback, the admin panel, sign-in limits | 27 | **all pass** |
+| End-to-end, third delivery (`node test/e2e-week3.mjs`) | Languages, the profile, passwords, addresses, history, reports, the server | 35 | **all pass** |
+| **Total** | | **154** | **154 pass, 0 fail** |
 
-**New this week: 54 checks** — 24 unit, 3 database, 27 end-to-end.
+**New this week: 72 checks** — 32 unit, 5 database, 35 end-to-end. The brief asked for 30.
 
-The 15 checks written for the first delivery were run again after every change and still pass unchanged.
-That is the evidence that bonus points, the admin panel and the sign-in limiter did not quietly alter
-ordering, payment or the role rules.
+The 42 end-to-end checks written for the first two deliveries were run again after every change and
+still pass unchanged. That is the evidence that languages, the profile, the password work and the
+address limiter did not quietly alter ordering, payment, bonus points or the role rules.
 
 ---
 
@@ -30,16 +31,20 @@ ordering, payment or the role rules.
 npm run db:up                                                           # 1) PostgreSQL in Docker
 DATABASE_URL=postgres://food:food@localhost:5433/food_delivery npm test  # unit + database
 npm run dev:api                                                          # 2) in a second terminal
-npm run test:e2e                                                         # 3) both HTTP suites
+npm run test:e2e                                                         # 3) all three HTTP suites
 ```
 
 Without `DATABASE_URL` the database tests skip themselves and only the pure rules run. `npm run test:e2e`
-runs the old suite and the new one in that order and stops at the first failing suite. The database tests
-need `psql` on the PATH.
+runs the three suites in order and stops at the first failing one. The database tests need `psql` on the
+PATH.
+
+The end-to-end suites register throwaway accounts named `e2e-…@example.test`, each with its own phone
+number, since one number now belongs to one customer. `npm run db:clean-tests` removes what earlier runs
+left behind.
 
 ---
 
-## 3. Unit tests — 33 checks
+## 3. Unit tests from the first two deliveries — 33 checks
 
 Pure rules, no database, no HTTP. Run with Node's own test runner; no testing library is installed.
 
@@ -98,7 +103,7 @@ Pure rules, no database, no HTTP. Run with Node's own test runner; no testing li
 
 ---
 
-## 4. Database tests — 7 checks
+## 4. Database tests from the first two deliveries — 7 checks
 
 These run against a real PostgreSQL through `psql`. They prove the rules hold even when a request never
 goes through the application at all — for example when someone runs an `UPDATE` by hand.
@@ -207,6 +212,157 @@ fresh inside the test, so balances and failure counters always start from zero.
 
 ---
 
+---
+
+## 6a. Unit tests added in the third delivery — 32 checks
+
+### `test/password.test.ts` (9 checks)
+
+| # | Check | Why it matters |
+|---|---|---|
+| 1 | length alone is not enough, it needs a letter and a digit | The rule itself, from both sides |
+| 2 | the most common choices are refused outright | `password1`, `qwerty123` and the rest of the short list |
+| 3 | it must not contain the owner's own name or email | `alice2026` for alice@example.test is the first guess anyone makes; a short fragment like "ann" is deliberately not enough to refuse on |
+| 4 | Cyrillic letters count as letters | The site is read in Russian and Kazakh; a password written in those alphabets must not be refused for "having no letters" |
+| 5 | the strength meter agrees with what the rules accept | The meter guides, the rule decides, and they must not contradict each other |
+| 6 | the token is random, and only its hash is ever stored | A stolen database must contain no working reset links |
+| 7 | comparing hashes does not leak how much matched | Constant-time comparison, and no crash on different lengths |
+| 8 | a reset link works once, and only before it expires | Expired, already used, unreadable, and the string form PostgreSQL returns |
+| 9 | a token from an earlier generation is refused | The exact rule behind "other devices have been signed out", including a token with no version at all |
+
+### `test/ip.test.ts` (5 checks)
+
+| # | Check | Why it matters |
+|---|---|---|
+| 10 | fifteen failures from one machine block it, fourteen do not | The threshold, on both sides |
+| 11 | its limit is looser than the account limit, and that is the point | One household behind one address must not block itself with ordinary mistakes |
+| 12 | the block lasts an hour, failures count over fifteen minutes | |
+| 13 | a manual block has no end, an automatic one runs out | Two different kinds of block in one table |
+| 14 | the server's own address is never blocked | Behind the site's proxy, blocking loopback would lock out every visitor at once |
+
+### `test/week3.test.ts` (13 checks)
+
+| # | Check | Why it matters |
+|---|---|---|
+| 15 | only the three languages the site speaks are accepted | |
+| 16 | a browser header is read, and anything unknown falls back to English | Including `kz`, which is the country, not the language, and quality values that reorder the list |
+| 17 | the new language field defaults to English and is validated | |
+| 18 | the password is judged against the name and the email | The registration form applies the rule with the person's own details |
+| 19 | the same number written differently is the same number | What the unique index compares, so the code and the index must agree |
+| 20 | a number needs 7 to 15 digits, however it is punctuated | |
+| 21 | the profile takes name, phone, address and language — and nothing else | `role`, `email` and `bonusPoints` sent along are simply absent from the result |
+| 22 | a broken phone or an unknown language is refused | |
+| 23 | changing a password needs the current one and a different new one | |
+| 24 | the email form and the token form of a reset | |
+| 25 | every history filter is optional, and an empty one narrows nothing | An empty search box must not hide every order |
+| 26 | the search is trimmed and limited, the status must be real | |
+| 27 | dates are parsed, and the range has to run forwards | One side on its own is fine: "everything since the first" is a real question |
+
+### `test/i18n.test.ts` (5 checks)
+
+These read the website's dictionary file directly. It imports nothing of its own, so it loads here
+without pulling in React, and a broken translation is caught by `npm test` rather than by someone
+opening the site in Kazakh and finding English in the middle of it.
+
+| # | Check | Why it matters |
+|---|---|---|
+| 28 | every language carries every key, with nothing left over | A missing key would silently fall back to English |
+| 29 | no translation is left empty or left in English by accident | Plus a spot check that the other two are genuinely translated, not copied |
+| 30 | a translation never loses or invents a placeholder | "{count} orders" translated without its `{count}` would show a sentence with a hole in it |
+| 31 | looking a message up fills its placeholders and falls back to English | A placeholder with no value stays as it is rather than printing "undefined" |
+| 32 | every status and role a page can show has a label in all three | The two sets that come from the database rather than from a page |
+
+---
+
+## 6b. Database tests added in the third delivery — 5 checks
+
+| # | Check | What it proves |
+|---|---|---|
+| 1 | one phone number belongs to one customer, however it is written | `+7 700 555 11 22` and `77005551122` collide, as they should |
+| 2 | two dishes cannot share a name, whatever the capitalisation or spacing | |
+| 3 | the language column accepts only the three the site speaks | And defaults to English rather than to nothing |
+| 4 | a reset link is stored once, as a hash, and never twice | And deleting the account takes its links with it: a link must never outlive its owner |
+| 5 | an address can be blocked only once, and never with a negative failure count | |
+
+---
+
+## 6c. End-to-end tests of the third delivery — 35 checks
+
+`node test/e2e-week3.mjs`. Each check uses its own cookie jar, so every role is a genuinely separate
+session, and every customer is registered fresh with a phone number no other account holds.
+
+### The server (3 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 1 | the health endpoint answers, and says whether the database is reachable | And the cheap liveness endpoint answers without touching the database |
+| 2 | answers carry the headers that stop the page being framed or sniffed | `nosniff`, `DENY`, and no `X-Powered-By` |
+| 3 | the seeded staff can still sign in | |
+
+### Registration, language and uniqueness (5 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 4 | registration takes a language, and it comes back with the session | Signing in on another device finds the same choice |
+| 5 | an unknown language, and a password built from the name, are refused | |
+| 6 | one phone number belongs to one account | The same number written without spacing is still refused, with the code `phone_taken` |
+| 7 | one email belongs to one account | Capitalisation does not create a second one |
+| 8 | two dishes cannot share a name | And renaming a dish to its own name is not a clash |
+
+### Profile (4 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 9 | a customer reads and edits their own profile | The change is real, not echoed back |
+| 10 | the profile cannot change the email, the role or the balance | `role: ADMIN`, another person's email and 99999 points are all ignored, and the account still cannot open the admin panel |
+| 11 | a profile cannot take a phone number another account holds | And keeping its own number is not a clash |
+| 12 | staff have a profile and a language, but no delivery details | |
+
+### Passwords (6 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 13 | a forgotten password answers the same either way | Word for word, whether or not the address exists |
+| 14 | a reset link works once and signs the old sessions out | The old password stops working, the link cannot be replayed, and the session opened beforehand is refused with `password_changed` |
+| 15 | asking again retires the earlier link | |
+| 16 | a weak new password is refused by the reset form | And the link survives the refusal: a rejected attempt must not consume it |
+| 17 | changing a password needs the current one, and keeps this session alive | The browser doing the changing is handed a fresh token |
+| 18 | changing a password signs the OTHER devices out | A second session, signed in moments earlier, is refused |
+
+### Blocking by address (3 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 19 | the admin blocks and unblocks an address, and it is journalled | |
+| 20 | the address list is admin-only, and states the rules in force | |
+| 21 | the server's own address cannot be blocked | `127.0.0.1`, `::1` and `localhost` are all refused, and a block with no reason is too |
+
+### History, search and repeating (6 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 22 | two orders are placed, to search through | |
+| 23 | the history searches by dish name | And the other order does not match |
+| 24 | the history searches by note, address and order number | |
+| 25 | the history filters by status and date, and refuses nonsense | An end date covers the whole of that day; a range in the past finds nothing |
+| 26 | repeating lists what is still on the menu and what it costs now | |
+| 27 | repeating notices a dish that has left the menu and one whose price moved | A dish is ordered, then hidden, and the tea is repriced; the answer reports both |
+| 28 | nobody can repeat somebody else's order | |
+
+### The newer reports (6 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 29 | the daily report adds up to the same money as the order report | Two reports over the same data must not disagree, and the summary must match its own rows |
+| 30 | the dish report accounts for every dish, and its shares add up | To 100%, within rounding |
+| 31 | the customer report counts orders and spending per customer | And the average is the total divided by the count |
+| 32 | all three take a date range and refuse a broken one | An empty range is empty, not an error |
+| 33 | each report downloads as CSV, with its own columns | |
+| 34 | a dish whose name holds a comma does not break the CSV | Read back with a real CSV reader, because splitting on commas is the mistake the quoting exists to survive |
+| 35 | reports stay closed to customers and the kitchen | And open to the administrator as well as the accountant |
+
+---
+
 ## 7. What is not covered by an automated test
 
 Honesty about the gaps matters more than a full-looking table.
@@ -216,7 +372,12 @@ Honesty about the gaps matters more than a full-looking table.
 | The drag gesture itself | Driving real HTML5 drag events needs a browser automation tool, which this project does not install. The endpoint behind every drag **is** tested (checks 6 and 7 above), and the gesture was tried by hand in Chrome and Firefox |
 | Cookie flags | `httpOnly`, `SameSite=Strict` and `Secure` were read from the response headers by hand |
 | Two checkouts at the same instant | The customer row is locked with `SELECT … FOR UPDATE` inside the payment transaction, which was confirmed by reading the code; a true race needs a load-testing tool |
-| The 15-minute block expiring on its own | Testing it for real would mean waiting fifteen minutes. The arithmetic is covered by unit checks 19–22, and the admin's manual unblock is covered end to end |
+| The 15-minute block expiring on its own | Testing it for real would mean waiting fifteen minutes. The arithmetic is covered by unit checks, and the admin's manual unblock is covered end to end |
+| The hour-long address block expiring | The same reasoning, an hour instead of fifteen minutes |
+| A reset link expiring after 30 minutes | The same again. That a link works once, and that a new one retires the old, *are* covered |
+| The mobile layout | The collapsing navigation, the scrolling tables and the card layout on a phone were checked by hand at phone and desktop widths |
+| A migration meeting data it refuses to touch | Exercised by hand against a database that held duplicate phone numbers: the index was not created, the warning named the clean-up script, and the service-level check held the rule meanwhile |
+| The production containers actually running | `docker compose -f docker-compose.prod.yml config` is run, which proves the file is valid and that it refuses to start without a `JWT_SECRET`. Building and running the three images is a manual step |
 | Visual layout | Checked by hand at phone and desktop widths |
 
 ---
@@ -225,14 +386,22 @@ Honesty about the gaps matters more than a full-looking table.
 
 | What the test found | Fix |
 |---|---|
-| Bonus points were not part of the order fingerprint, so a retry under the same attempt ID could arrive with a different discount | The points were folded into the `request_hash`; unit check 33 now guards it |
-| The accounting total still showed the list price after a bonus discount, so the report overstated the money received | The report now carries both: `totalTiyn` for the food and `paidTiyn` for the till, with the discount between them (end-to-end check 27) |
+| Bonus points were not part of the order fingerprint, so a retry under the same attempt ID could arrive with a different discount | The points were folded into the `request_hash`, with a unit check guarding it |
+| The accounting total still showed the list price after a bonus discount, so the report overstated the money received | The report now carries both: `totalTiyn` for the food and `paidTiyn` for the till, with the discount between them |
 | Signing out required a valid token, so a user blocked mid-session could not clear their cookie | Sign-out now always clears the cookie and writes a journal line only when the token can still be read |
+| **(third delivery)** "Other devices have been signed out" was decided by comparing the token's issue time with the password's change time. A JWT records whole seconds, so a session opened in the same second as the change survived — a window of up to one second, and an end-to-end check that passed or failed depending on the clock | Replaced with a session generation: `users.token_version` is carried in every token and raised when a password changes, so old tokens are refused exactly. The clock is no longer involved, and the test is deterministic |
+| **(third delivery)** The unique index on phone numbers could not be created on an existing database, because earlier test runs had registered every account with the same number | Two changes. The migration now reports the clash and names a clean-up script instead of failing the start-up or rewriting rows, and `UniquenessService` holds the rule meanwhile. The suites now generate a distinct number per account, which is what a system with unique phone numbers should have been testing all along |
+| **(third delivery)** The first CSV check counted columns with a regular expression that produced one field too many, and failed against correct output | The check now parses the line the way a spreadsheet does. Splitting on commas was exactly the mistake the quoting exists to survive, so the test had to stop making it |
 
 ---
 
 ## 9. Conclusion
 
-All 82 automated checks pass. The second delivery's features are covered at three levels — the rules on
-their own, the database's own refusals, and the behaviour over HTTP — and the first delivery's fifteen
-checks still pass unchanged, so the new work did not break the old.
+All 154 automated checks pass. The third delivery's features are covered at the same three levels as the
+earlier ones — the rules on their own, the database's own refusals, and the behaviour over HTTP — and the
+42 checks from the first two deliveries still pass unchanged, so the new work did not break the old.
+
+Three of this week's defects were found by the tests rather than by a reader, and two of them were real
+faults in the product: a one-second window in which a signed-out session kept working, and a migration
+that could not be applied to a database that already had data in it. Both are described above, with what
+replaced them.

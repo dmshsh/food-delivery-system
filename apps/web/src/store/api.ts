@@ -6,12 +6,21 @@ import type {
   BonusAccount,
   CheckoutOutcome,
   CreateOrderBody,
+  CustomerReport,
+  DailyReport,
+  DishReport,
   FeedbackList,
+  FullProfile,
+  HistoryFilter,
+  IpList,
+  Language,
   MenuItem,
   MenuItemBody,
   Order,
   OrderResult,
   OrderStatus,
+  ProfileBody,
+  RepeatOrder,
   Report,
   Role,
   SecurityJournal,
@@ -25,10 +34,42 @@ function statusParams(arg: { status?: OrderStatus | '' } | void): { status: stri
   return status ? { status } : undefined;
 }
 
+/** Only the filters that were actually set: an empty one must not narrow anything. */
+function historyParams(arg: HistoryFilter | void): Record<string, string> {
+  const filter = (arg ?? {}) as HistoryFilter;
+  const params: Record<string, string> = {};
+  if (filter.status) params.status = filter.status;
+  if (filter.search?.trim()) params.search = filter.search.trim();
+  if (filter.from) params.from = filter.from;
+  if (filter.to) params.to = filter.to;
+  return params;
+}
+
+/** A date range, for the three accounting reports. */
+function rangeParams(arg: { from?: string; to?: string } | void): Record<string, string> {
+  const range = (arg ?? {}) as { from?: string; to?: string };
+  const params: Record<string, string> = {};
+  if (range.from) params.from = range.from;
+  if (range.to) params.to = range.to;
+  return params;
+}
+
 export const api = createApi({
   reducerPath: 'api',
   baseQuery: fetchBaseQuery({ baseUrl: '/api', credentials: 'include' }),
-  tagTypes: ['Session', 'Orders', 'Report', 'Menu', 'Bonus', 'Feedback', 'AdminMenu', 'AdminUsers', 'Security'],
+  tagTypes: [
+    'Session',
+    'Orders',
+    'Report',
+    'Menu',
+    'Bonus',
+    'Feedback',
+    'AdminMenu',
+    'AdminUsers',
+    'Security',
+    'Profile',
+    'Ips',
+  ],
   endpoints: (build) => ({
     // ---- session
     me: build.query<SessionResponse, void>({
@@ -41,7 +82,7 @@ export const api = createApi({
     }),
     register: build.mutation<
       SessionResponse,
-      { fullName: string; email: string; phone: string; address: string; password: string }
+      { fullName: string; email: string; phone: string; address: string; password: string; language: Language }
     >({
       query: (body) => ({ url: '/auth/register', method: 'POST', body }),
       invalidatesTags: ['Session'],
@@ -57,9 +98,14 @@ export const api = createApi({
     }),
 
     // ---- orders
-    orders: build.query<{ orders: Order[] }, { status?: OrderStatus | '' } | void>({
-      query: (arg) => ({ url: '/orders', params: statusParams(arg) }),
+    orders: build.query<{ orders: Order[] }, HistoryFilter | void>({
+      query: (arg) => ({ url: '/orders', params: historyParams(arg) }),
       providesTags: ['Orders'],
+    }),
+    repeatOrder: build.query<RepeatOrder, number>({
+      query: (id) => `/orders/${id}/repeat`,
+      // Prices and availability change, so this is always asked fresh.
+      keepUnusedDataFor: 0,
     }),
     createOrder: build.mutation<OrderResult, CreateOrderBody>({
       query: (body) => ({ url: '/orders', method: 'POST', body }),
@@ -85,10 +131,52 @@ export const api = createApi({
       providesTags: ['Report'],
     }),
 
+    // ---- profile and passwords
+    profile: build.query<{ profile: FullProfile }, void>({
+      query: () => '/profile',
+      providesTags: ['Profile'],
+    }),
+    updateProfile: build.mutation<{ profile: FullProfile }, ProfileBody>({
+      query: (body) => ({ url: '/profile', method: 'PATCH', body }),
+      invalidatesTags: ['Profile', 'Session'],
+    }),
+    setLanguage: build.mutation<{ language: Language }, { language: Language }>({
+      query: (body) => ({ url: '/profile/language', method: 'PATCH', body }),
+      invalidatesTags: ['Session'],
+    }),
+    forgotPassword: build.mutation<{ message: string; demoToken?: string; demoNote?: string }, { email: string }>({
+      query: (body) => ({ url: '/auth/password/forgot', method: 'POST', body }),
+    }),
+    resetPassword: build.mutation<{ ok: true; message: string }, { token: string; password: string }>({
+      query: (body) => ({ url: '/auth/password/reset', method: 'POST', body }),
+      invalidatesTags: ['Session'],
+    }),
+    changePassword: build.mutation<
+      { ok: true; message: string },
+      { currentPassword: string; newPassword: string }
+    >({
+      query: (body) => ({ url: '/auth/password/change', method: 'POST', body }),
+      invalidatesTags: ['Profile'],
+    }),
+
     // ---- bonus (customer)
     bonus: build.query<BonusAccount, void>({
       query: () => '/bonus',
       providesTags: ['Bonus'],
+    }),
+
+    // ---- the three newer accounting reports
+    dailyReport: build.query<DailyReport, { from?: string; to?: string } | void>({
+      query: (arg) => ({ url: '/reports/daily', params: rangeParams(arg) }),
+      providesTags: ['Report'],
+    }),
+    dishReport: build.query<DishReport, { from?: string; to?: string } | void>({
+      query: (arg) => ({ url: '/reports/dishes', params: rangeParams(arg) }),
+      providesTags: ['Report'],
+    }),
+    customerReport: build.query<CustomerReport, { from?: string; to?: string } | void>({
+      query: (arg) => ({ url: '/reports/customers', params: rangeParams(arg) }),
+      providesTags: ['Report'],
     }),
 
     // ---- feedback (admin + accountant)
@@ -141,6 +229,18 @@ export const api = createApi({
       query: ({ id, role }) => ({ url: `/admin/users/${id}/role`, method: 'PATCH', body: { role } }),
       invalidatesTags: ['AdminUsers', 'Security'],
     }),
+    blockedIps: build.query<IpList, void>({
+      query: () => '/admin/ips',
+      providesTags: ['Ips'],
+    }),
+    blockIp: build.mutation<IpList, { ip: string; reason: string }>({
+      query: (body) => ({ url: '/admin/ips', method: 'POST', body }),
+      invalidatesTags: ['Ips', 'Security'],
+    }),
+    unblockIp: build.mutation<IpList, string>({
+      query: (ip) => ({ url: `/admin/ips/${encodeURIComponent(ip)}`, method: 'DELETE' }),
+      invalidatesTags: ['Ips', 'Security'],
+    }),
     securityJournal: build.query<SecurityJournal, { kind?: string; severity?: Severity | '' } | void>({
       query: (arg) => {
         const filter = (arg ?? {}) as { kind?: string; severity?: Severity | '' };
@@ -161,11 +261,24 @@ export const {
   useLogoutMutation,
   useMenuQuery,
   useOrdersQuery,
+  useLazyRepeatOrderQuery,
   useCreateOrderMutation,
   useCheckoutMutation,
   useSetStatusMutation,
   useLeaveFeedbackMutation,
   useReportQuery,
+  useDailyReportQuery,
+  useDishReportQuery,
+  useCustomerReportQuery,
+  useProfileQuery,
+  useUpdateProfileMutation,
+  useSetLanguageMutation,
+  useForgotPasswordMutation,
+  useResetPasswordMutation,
+  useChangePasswordMutation,
+  useBlockedIpsQuery,
+  useBlockIpMutation,
+  useUnblockIpMutation,
   useBonusQuery,
   useFeedbackListQuery,
   useReplyToFeedbackMutation,

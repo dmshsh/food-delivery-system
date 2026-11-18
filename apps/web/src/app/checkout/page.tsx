@@ -5,7 +5,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import RequireRole from '@/components/RequireRole';
 import StatusBadge from '@/components/StatusBadge';
 import { useSession } from '@/components/useSession';
-import { errorCode, errorMessage, formatDelivery, formatKzt, formatPoints, isNetworkError } from '@/lib/format';
+import { useI18n } from '@/i18n/I18nProvider';
+import { errorCode, formatKzt, formatPoints, isNetworkError, translateError } from '@/lib/format';
 import type { CheckoutOutcome, Order } from '@/lib/types';
 import { useBonusQuery, useCheckoutMutation, useCreateOrderMutation, useMenuQuery, useOrdersQuery } from '@/store/api';
 import {
@@ -48,6 +49,7 @@ function Checkout() {
   const dispatch = useAppDispatch();
   const cart = useAppSelector((s) => s.cart);
   const { profile } = useSession();
+  const { t, lang } = useI18n();
   const menu = useMenuQuery();
   const bonus = useBonusQuery();
   const [createOrder, create] = useCreateOrderMutation();
@@ -107,9 +109,10 @@ function Checkout() {
   const discount = usedPoints * pointTiyn;
   const payable = Math.max(0, total - discount);
   const willEarn = Math.floor((payable * (earnPercent / 100)) / pointTiyn);
+  const points = (n: number) => formatPoints(n, lang, t('common.points'));
 
-  // The cart can change after points were chosen, so the stored number is trimmed back
-  // to what the new total allows instead of being silently refused by the server.
+  // The cart can change after points were chosen, so the stored number is trimmed
+  // back to what the new total allows instead of being refused by the server.
   useEffect(() => {
     if (!frozen && cart.bonusPoints > maxPoints) dispatch(setBonusPoints(maxPoints));
   }, [cart.bonusPoints, maxPoints, frozen, dispatch]);
@@ -118,7 +121,7 @@ function Checkout() {
     setError('');
     let d = cart.draft;
     if (!d) {
-      if (!cart.deliveryAddress.trim()) return setError('Enter a delivery address.');
+      if (!cart.deliveryAddress.trim()) return setError(t('checkout.needAddress'));
       d = {
         attemptId: newAttemptId(),
         payload: {
@@ -135,7 +138,7 @@ function Checkout() {
       const result = await createOrder({ attemptId: d.attemptId, ...d.payload }).unwrap();
       dispatch(draftSaved(result.order.id));
     } catch (e) {
-      setError(errorMessage(e));
+      setError(translateError(e, t));
       // Network failure: keep the draft, so "Retry" sends the SAME attempt. The server answered "no": nothing was saved.
       if (!isNetworkError(e)) dispatch(clearDraft());
     }
@@ -149,9 +152,9 @@ function Checkout() {
       await checkout({ id: order.id, outcome }).unwrap();
     } catch (e) {
       if (errorCode(e) === 'confirmation_lost' || isNetworkError(e)) {
-        setRetryNote(errorMessage(e));
+        setRetryNote(translateError(e, t));
       } else {
-        setError(errorMessage(e));
+        setError(translateError(e, t));
       }
     }
   }
@@ -164,23 +167,27 @@ function Checkout() {
       className={`card mb-6 ${done.status === 'CONFIRMED' ? 'border-emerald-300 bg-emerald-50' : 'border-red-300 bg-red-50'}`}
     >
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-semibold">Order #{done.id}</h2>
+        <h2 className="text-lg font-semibold">{t('checkout.orderNumber', { id: done.id })}</h2>
         <StatusBadge status={done.status} />
       </div>
       <p className="mt-2 text-sm">
-        {done.status === 'CONFIRMED' && 'Thank you! Your demo payment was approved and the kitchen can see your order.'}
-        {done.status === 'PAYMENT_REJECTED' && 'The demo payment was rejected. Nothing was charged. Your cart is still here: you can try again.'}
-        {done.status === 'EXPIRED' && 'The 2-minute checkout time limit passed. Nothing was charged. Your cart is still here: you can try again.'}
+        {done.status === 'CONFIRMED' && t('checkout.resultConfirmed')}
+        {done.status === 'PAYMENT_REJECTED' && t('checkout.resultRejected')}
+        {done.status === 'EXPIRED' && t('checkout.resultExpired')}
       </p>
       {done.status === 'CONFIRMED' && (Boolean(done.bonusSpent) || Boolean(done.bonusEarned)) && (
         <p className="mt-2 text-sm text-emerald-900">
-          {Boolean(done.bonusSpent) && <>You paid {formatKzt(done.discountTiyn ?? 0)} with {formatPoints(done.bonusSpent ?? 0)}. </>}
-          {Boolean(done.bonusEarned) && <>This order earned you {formatPoints(done.bonusEarned ?? 0)}.</>}
+          {Boolean(done.bonusSpent) &&
+            `${t('checkout.paidWithPoints', {
+              amount: formatKzt(done.discountTiyn ?? 0, lang),
+              points: points(done.bonusSpent ?? 0),
+            })} `}
+          {Boolean(done.bonusEarned) && t('checkout.earnedPoints', { points: points(done.bonusEarned ?? 0) })}
         </p>
       )}
-      <div className="mt-3 flex gap-2">
-        <Link href="/orders" className="btn-primary">My orders</Link>
-        <button className="btn-secondary" onClick={() => setDone(null)}>Dismiss</button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Link href="/orders" className="btn-primary">{t('checkout.myOrders')}</Link>
+        <button className="btn-secondary" onClick={() => setDone(null)}>{t('checkout.dismiss')}</button>
       </div>
     </div>
   );
@@ -190,48 +197,71 @@ function Checkout() {
     return (
       <div className="mx-auto max-w-2xl">
         {resultBanner}
-        <h1 className="text-2xl font-semibold">Payment</h1>
+        <h1 className="text-2xl font-semibold">{t('checkout.paymentTitle')}</h1>
         <div className="card mt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-medium">Order #{order.id}</h2>
+            <h2 className="font-medium">{t('checkout.orderNumber', { id: order.id })}</h2>
             <StatusBadge status={order.status} />
           </div>
           <ul className="mt-3 divide-y divide-stone-100 text-sm">
             {order.items.map((i) => (
-              <li key={i.itemId} className="flex justify-between py-1.5">
+              <li key={i.itemId} className="flex justify-between gap-3 py-1.5">
                 <span>{i.quantity} × {i.name}</span>
-                <span>{formatKzt((i.unitPriceTiyn ?? 0) * i.quantity)}</span>
+                <span className="whitespace-nowrap">{formatKzt((i.unitPriceTiyn ?? 0) * i.quantity, lang)}</span>
               </li>
             ))}
           </ul>
-          <p className="mt-3 flex justify-between text-sm"><span>Items</span><span>{formatKzt(order.totalTiyn ?? 0)}</span></p>
+          <p className="mt-3 flex justify-between text-sm">
+            <span>{t('checkout.items')}</span>
+            <span>{formatKzt(order.totalTiyn ?? 0, lang)}</span>
+          </p>
           {Boolean(order.bonusRequested) && (
             <p className="flex justify-between text-sm text-amber-800">
-              <span>Bonus points ({formatPoints(order.bonusRequested ?? 0)})</span>
-              <span>−{formatKzt(order.discountTiyn ?? 0)}</span>
+              <span>{t('checkout.bonusTitle')} ({points(order.bonusRequested ?? 0)})</span>
+              <span>−{formatKzt(order.discountTiyn ?? 0, lang)}</span>
             </p>
           )}
           <p className="mt-1 flex justify-between border-t border-stone-200 pt-2 font-medium">
-            <span>To pay</span><span>{formatKzt(order.payableTiyn ?? order.totalTiyn ?? 0)}</span>
+            <span>{t('checkout.toPay')}</span>
+            <span>{formatKzt(order.payableTiyn ?? order.totalTiyn ?? 0, lang)}</span>
           </p>
-          <p className="mt-2 text-sm text-stone-600">Delivery: {formatDelivery(order.deliveryTime)} · {order.deliveryAddress}</p>
+          <p className="mt-2 text-sm text-stone-600">
+            {t('checkout.delivery')}:{' '}
+            {order.deliveryTime
+              ? new Date(order.deliveryTime).toLocaleString(lang === 'en' ? 'en-GB' : lang)
+              : t('checkout.asap')}{' '}
+            · {order.deliveryAddress}
+          </p>
           <p className="mt-3 text-sm" aria-live="polite">
-            Time left to pay: <strong>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}</strong>
+            {t('checkout.timeLeft')}{' '}
+            <strong>
+              {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}
+            </strong>
           </p>
         </div>
 
         <div className="card mt-4">
-          <p className="text-sm text-stone-600">Demo payment: no real money moves. Choose what the bank answers:</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button className="btn-primary" disabled={payment.isLoading} onClick={() => pay('success')}>Approve payment</button>
-            <button className="btn-danger" disabled={payment.isLoading} onClick={() => pay('rejected')}>Reject payment</button>
-            <button className="btn-secondary" disabled={payment.isLoading} onClick={() => pay('timeout')}>Simulate time limit</button>
-            <button className="btn-secondary" disabled={payment.isLoading} onClick={() => pay('lost_reply')}>Approve, then lose the confirmation</button>
+          <p className="text-sm text-stone-600">{t('checkout.paymentIntro')}</p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <button className="btn-primary" disabled={payment.isLoading} onClick={() => pay('success')}>
+              {t('checkout.approve')}
+            </button>
+            <button className="btn-danger" disabled={payment.isLoading} onClick={() => pay('rejected')}>
+              {t('checkout.reject')}
+            </button>
+            <button className="btn-secondary" disabled={payment.isLoading} onClick={() => pay('timeout')}>
+              {t('checkout.timeout')}
+            </button>
+            <button className="btn-secondary" disabled={payment.isLoading} onClick={() => pay('lost_reply')}>
+              {t('checkout.lostReply')}
+            </button>
           </div>
           {retryNote && (
             <div role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
               <p>{retryNote}</p>
-              <button className="btn-primary mt-2" disabled={payment.isLoading} onClick={() => pay('success')}>Retry same checkout</button>
+              <button className="btn-primary mt-2" disabled={payment.isLoading} onClick={() => pay('success')}>
+                {t('checkout.retryCheckout')}
+              </button>
             </div>
           )}
           {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
@@ -246,8 +276,8 @@ function Checkout() {
       <div className="mx-auto max-w-2xl">
         {resultBanner}
         <div className="card">
-          <p>Your cart is empty.</p>
-          <Link href="/" className="btn-primary mt-3">Browse the menu</Link>
+          <p>{t('checkout.empty')}</p>
+          <Link href="/" className="btn-primary mt-3">{t('checkout.browseMenu')}</Link>
         </div>
       </div>
     );
@@ -256,49 +286,71 @@ function Checkout() {
   return (
     <div className="mx-auto max-w-2xl">
       {resultBanner}
-      <h1 className="text-2xl font-semibold">Checkout</h1>
+      <h1 className="text-2xl font-semibold">{t('checkout.title')}</h1>
 
       <section className="card mt-4" aria-labelledby="cart-h">
-        <h2 id="cart-h" className="font-medium">Your order</h2>
+        <h2 id="cart-h" className="font-medium">{t('checkout.yourOrder')}</h2>
         <ul className="mt-2 divide-y divide-stone-100">
           {lines.map(({ item, quantity }) => (
-            <li key={item.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-              <span className="flex-1">{item.name}</span>
+            <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm">
+              <span className="min-w-[8rem] flex-1">{item.name}</span>
               <div className="flex items-center gap-2">
-                <button className="btn-secondary px-2 py-1" disabled={frozen} aria-label={`Remove one ${item.name}`} onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: quantity - 1 }))}>−</button>
+                <button
+                  className="btn-secondary px-3 py-1"
+                  disabled={frozen}
+                  aria-label={t('menu.removeOne', { name: item.name })}
+                  onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: quantity - 1 }))}
+                >
+                  −
+                </button>
                 <span className="w-5 text-center">{quantity}</span>
-                <button className="btn-secondary px-2 py-1" disabled={frozen || quantity >= MAX_QUANTITY} aria-label={`Add one ${item.name}`} onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: quantity + 1 }))}>+</button>
+                <button
+                  className="btn-secondary px-3 py-1"
+                  disabled={frozen || quantity >= MAX_QUANTITY}
+                  aria-label={t('menu.addOne', { name: item.name })}
+                  onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: quantity + 1 }))}
+                >
+                  +
+                </button>
               </div>
-              <span className="w-24 text-right">{formatKzt(quantity * item.priceTiyn)}</span>
+              <span className="w-24 text-right">{formatKzt(quantity * item.priceTiyn, lang)}</span>
             </li>
           ))}
         </ul>
-        <p className="mt-3 flex justify-between border-t border-stone-200 pt-3 text-sm"><span>Items</span><span>{formatKzt(total)}</span></p>
+        <p className="mt-3 flex justify-between border-t border-stone-200 pt-3 text-sm">
+          <span>{t('checkout.items')}</span>
+          <span>{formatKzt(total, lang)}</span>
+        </p>
         {usedPoints > 0 && (
           <p className="flex justify-between text-sm text-amber-800">
-            <span>Bonus points</span><span>−{formatKzt(discount)}</span>
+            <span>{t('checkout.bonusTitle')}</span>
+            <span>−{formatKzt(discount, lang)}</span>
           </p>
         )}
-        <p className="mt-1 flex justify-between font-medium"><span>To pay</span><span>{formatKzt(payable)}</span></p>
+        <p className="mt-1 flex justify-between font-medium">
+          <span>{t('checkout.toPay')}</span>
+          <span>{formatKzt(payable, lang)}</span>
+        </p>
       </section>
 
       <section className="card mt-4" aria-labelledby="bonus-h">
-        <h2 id="bonus-h" className="font-medium">Bonus points</h2>
+        <h2 id="bonus-h" className="font-medium">{t('checkout.bonusTitle')}</h2>
         <p className="mt-1 text-sm text-stone-600">
-          You have <strong>{formatPoints(balance)}</strong>. One point is {formatKzt(pointTiyn)}. Points can cover up to{' '}
-          {maxSharePercent}% of an order, and an approved payment earns {earnPercent}% of the money paid back as points.
+          {t('checkout.bonusHave', { points: points(balance), value: formatKzt(pointTiyn, lang) })}{' '}
+          {t('checkout.bonusRules', { share: maxSharePercent, earn: earnPercent })}
         </p>
         {maxPoints === 0 ? (
           <p className="mt-2 text-sm text-stone-500">
-            {balance === 0 ? 'You have no points yet: your first paid order will earn some.' : 'This order is too small to use points on.'}
+            {balance === 0 ? t('checkout.bonusNone') : t('checkout.bonusTooSmall')}
           </p>
         ) : (
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <div>
-              <label htmlFor="points" className="label">Points to use (max {maxPoints})</label>
+              <label htmlFor="points" className="label">{t('checkout.bonusUse', { max: maxPoints })}</label>
               <input
                 id="points"
                 type="number"
+                inputMode="numeric"
                 className="input w-40"
                 min={0}
                 max={maxPoints}
@@ -309,63 +361,97 @@ function Checkout() {
               />
             </div>
             <button type="button" className="btn-secondary" disabled={frozen} onClick={() => dispatch(setBonusPoints(maxPoints))}>
-              Use maximum
+              {t('checkout.bonusMax')}
             </button>
             {cart.bonusPoints > 0 && (
               <button type="button" className="btn-secondary" disabled={frozen} onClick={() => dispatch(setBonusPoints(0))}>
-                Use none
+                {t('checkout.bonusZero')}
               </button>
             )}
           </div>
         )}
-        <p className="mt-3 text-sm text-emerald-800">
-          This order will earn you about {formatPoints(willEarn)} once the payment is approved.
-        </p>
+        <p className="mt-3 text-sm text-emerald-800">{t('checkout.bonusWillEarn', { points: points(willEarn) })}</p>
       </section>
 
       <section className="card mt-4 space-y-4" aria-labelledby="delivery-h">
-        <h2 id="delivery-h" className="font-medium">Delivery</h2>
+        <h2 id="delivery-h" className="font-medium">{t('checkout.delivery')}</h2>
         <div>
-          <label htmlFor="address" className="label">Delivery address</label>
-          <input id="address" className="input" disabled={frozen} maxLength={240} value={cart.deliveryAddress}
-            onChange={(e) => dispatch(setField({ field: 'deliveryAddress', value: e.target.value }))} />
+          <label htmlFor="address" className="label">{t('checkout.address')}</label>
+          <input
+            id="address"
+            className="input"
+            disabled={frozen}
+            maxLength={240}
+            value={cart.deliveryAddress}
+            onChange={(e) => dispatch(setField({ field: 'deliveryAddress', value: e.target.value }))}
+          />
         </div>
         <fieldset disabled={frozen}>
-          <legend className="label">Delivery time</legend>
+          <legend className="label">{t('checkout.time')}</legend>
           <div className="flex flex-wrap items-center gap-4 text-sm">
             <label className="flex items-center gap-2">
-              <input type="radio" name="when" checked={cart.deliveryTime === ''} onChange={() => dispatch(setField({ field: 'deliveryTime', value: '' }))} />
-              As soon as possible
+              <input
+                type="radio"
+                name="when"
+                checked={cart.deliveryTime === ''}
+                onChange={() => dispatch(setField({ field: 'deliveryTime', value: '' }))}
+              />
+              {t('checkout.asap')}
             </label>
             <label className="flex items-center gap-2">
-              <input type="radio" name="when" checked={cart.deliveryTime !== ''} onChange={() => dispatch(setField({ field: 'deliveryTime', value: toLocalInput(new Date(Date.now() + 3600 * 1000)) }))} />
-              Choose a time
+              <input
+                type="radio"
+                name="when"
+                checked={cart.deliveryTime !== ''}
+                onChange={() =>
+                  dispatch(setField({ field: 'deliveryTime', value: toLocalInput(new Date(Date.now() + 3600 * 1000)) }))
+                }
+              />
+              {t('checkout.chooseTime')}
             </label>
             {cart.deliveryTime !== '' && (
-              <input type="datetime-local" aria-label="Requested delivery time" className="input w-auto" value={cart.deliveryTime}
-                min={toLocalInput(new Date())} max={toLocalInput(new Date(Date.now() + 7 * 24 * 3600 * 1000))}
-                onChange={(e) => dispatch(setField({ field: 'deliveryTime', value: e.target.value }))} />
+              <input
+                type="datetime-local"
+                aria-label={t('checkout.requestedTime')}
+                className="input w-auto"
+                value={cart.deliveryTime}
+                min={toLocalInput(new Date())}
+                max={toLocalInput(new Date(Date.now() + 7 * 24 * 3600 * 1000))}
+                onChange={(e) => dispatch(setField({ field: 'deliveryTime', value: e.target.value }))}
+              />
             )}
           </div>
         </fieldset>
         <div>
-          <label htmlFor="notes" className="label">Note for the kitchen or courier (optional)</label>
-          <textarea id="notes" rows={2} maxLength={300} className="input" disabled={frozen} value={cart.notes}
-            onChange={(e) => dispatch(setField({ field: 'notes', value: e.target.value }))} />
+          <label htmlFor="notes" className="label">{t('checkout.notes')}</label>
+          <textarea
+            id="notes"
+            rows={2}
+            maxLength={300}
+            className="input"
+            disabled={frozen}
+            value={cart.notes}
+            onChange={(e) => dispatch(setField({ field: 'notes', value: e.target.value }))}
+          />
         </div>
       </section>
 
       {draft && !draft.orderId && (
         <div role="status" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
-          The last attempt may not have reached the server. Press Retry: it sends the same order again, and the server
-          never creates a duplicate.
-          <button className="ml-3 underline" onClick={() => dispatch(clearDraft())}>Discard attempt and edit</button>
+          {t('checkout.retryNotice')}
+          <button className="ml-3 underline" onClick={() => dispatch(clearDraft())}>
+            {t('checkout.discardAttempt')}
+          </button>
         </div>
       )}
       {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
 
       <button className="btn-primary mt-4 w-full" disabled={create.isLoading || lines.length === 0} onClick={placeOrder}>
-        {create.isLoading ? 'Saving order…' : draft ? 'Retry same order' : `Continue to payment · ${formatKzt(payable)}`}
+        {create.isLoading
+          ? t('checkout.savingOrder')
+          : draft
+            ? t('checkout.retrySame')
+            : t('checkout.continue', { total: formatKzt(payable, lang) })}
       </button>
     </div>
   );

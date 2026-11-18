@@ -3,57 +3,97 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { errorMessage } from '@/lib/format';
+import PasswordField from '@/components/PasswordField';
+import { useI18n } from '@/i18n/I18nProvider';
+import { LANGUAGES, LANGUAGE_NAMES } from '@/i18n/dictionaries';
+import { translateError } from '@/lib/format';
+import type { Language } from '@/lib/types';
 import { useRegisterMutation } from '@/store/api';
-
-const FIELDS = [
-  { name: 'fullName', label: 'Full name', type: 'text', autoComplete: 'name' },
-  { name: 'email', label: 'Email', type: 'email', autoComplete: 'email' },
-  { name: 'phone', label: 'Phone', type: 'tel', autoComplete: 'tel' },
-  { name: 'address', label: 'Delivery address', type: 'text', autoComplete: 'street-address' },
-  { name: 'password', label: 'Password (8+ characters)', type: 'password', autoComplete: 'new-password' },
-] as const;
-
-type FormState = Record<(typeof FIELDS)[number]['name'], string>;
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { t, lang, setLang } = useI18n();
   const [register, { isLoading }] = useRegisterMutation();
-  const [form, setForm] = useState<FormState>({ fullName: '', email: '', phone: '', address: '', password: '' });
+  const [form, setForm] = useState({ fullName: '', email: '', phone: '', address: '', password: '' });
+  const [language, setLanguage] = useState<Language>(lang);
   const [error, setError] = useState('');
+
+  const set = (field: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm({ ...form, [field]: e.target.value });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
     try {
-      await register(form).unwrap();
+      await register({ ...form, language }).unwrap();
+      // The site switches to the language the new account chose straight away,
+      // rather than waiting for the next sign-in.
+      setLang(language);
       router.push('/');
     } catch (err) {
-      setError(errorMessage(err));
+      setError(translateError(err, t));
     }
   }
 
   return (
     <div className="mx-auto max-w-md">
-      <h1 className="text-2xl font-semibold">Create an account</h1>
+      <h1 className="text-2xl font-semibold">{t('register.title')}</h1>
       <form onSubmit={submit} className="card mt-4 space-y-4">
-        {FIELDS.map((f) => (
-          <div key={f.name}>
-            <label htmlFor={f.name} className="label">{f.label}</label>
-            <input
-              id={f.name}
-              type={f.type}
-              required
-              autoComplete={f.autoComplete}
-              className="input"
-              value={form[f.name]}
-              onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}
-            />
-          </div>
-        ))}
+        <div>
+          <label htmlFor="fullName" className="label">{t('register.fullName')}</label>
+          <input id="fullName" type="text" required autoComplete="name" className="input" value={form.fullName} onChange={set('fullName')} />
+        </div>
+        <div>
+          <label htmlFor="email" className="label">{t('register.email')}</label>
+          <input id="email" type="email" required autoComplete="email" inputMode="email" className="input" value={form.email} onChange={set('email')} />
+        </div>
+        <div>
+          <label htmlFor="phone" className="label">{t('register.phone')}</label>
+          <input id="phone" type="tel" required autoComplete="tel" inputMode="tel" className="input" value={form.phone} onChange={set('phone')} />
+          <p className="mt-1 text-xs text-stone-500">{t('register.phoneHint')}</p>
+        </div>
+        <div>
+          <label htmlFor="address" className="label">{t('register.address')}</label>
+          <input id="address" type="text" required autoComplete="street-address" className="input" value={form.address} onChange={set('address')} />
+        </div>
+
+        {/* The field added this week: the language the account reads the site in. */}
+        <div>
+          <label htmlFor="language" className="label">{t('register.language')}</label>
+          <select
+            id="language"
+            className="input"
+            value={language}
+            onChange={(e) => {
+              const next = e.target.value as Language;
+              setLanguage(next);
+              setLang(next); // show the form itself in the chosen language at once
+            }}
+          >
+            {LANGUAGES.map((code) => (
+              <option key={code} value={code}>
+                {LANGUAGE_NAMES[code]}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-stone-500">{t('register.languageHint')}</p>
+        </div>
+
+        <PasswordField
+          id="password"
+          label={t('register.password')}
+          value={form.password}
+          onChange={(value) => setForm({ ...form, password: value })}
+          hint={t('register.passwordHint')}
+        />
+
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-        <button className="btn-primary w-full" disabled={isLoading}>{isLoading ? 'Creating…' : 'Register'}</button>
-        <p className="text-sm text-stone-600">Already registered? <Link href="/login" className="underline">Sign in</Link></p>
+        <button className="btn-primary w-full" disabled={isLoading}>
+          {isLoading ? t('register.submitting') : t('register.submit')}
+        </button>
+        <p className="text-sm text-stone-600">
+          {t('register.haveAccount')} <Link href="/login" className="underline">{t('nav.signIn')}</Link>
+        </p>
       </form>
     </div>
   );

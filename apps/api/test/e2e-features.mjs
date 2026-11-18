@@ -28,6 +28,13 @@ function client() {
   };
 }
 
+/** A phone number no other account holds: one number belongs to one customer. */
+let phoneCounter = 0;
+function uniquePhone() {
+  const unique = String(Date.now()).slice(-7) + String(phoneCounter++).padStart(2, '0');
+  return `+7 ${unique.slice(0, 3)} ${unique.slice(3, 6)} ${unique.slice(6)}`;
+}
+
 let passed = 0;
 async function check(name, fn) {
   try {
@@ -47,7 +54,7 @@ async function newCustomer(label) {
   const r = await c('POST', '/auth/register', {
     fullName: `E2E ${label}`,
     email,
-    phone: '+7 700 111 22 33',
+    phone: uniquePhone(),
     address: 'Almaty, Abay 1',
     password: 'longenough1',
   });

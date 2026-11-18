@@ -10,10 +10,18 @@ import { OrdersService } from './orders.service';
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
+  /** `?status=&search=&from=&to=` — the filters above the order history. */
   @Get()
   @Roles('CUSTOMER', 'KITCHEN')
-  list(@CurrentUser() user: AuthUser, @Query('status') status?: string) {
-    return this.orders.list(user, status);
+  list(@CurrentUser() user: AuthUser, @Query() query: Record<string, string>) {
+    return this.orders.list(user, query);
+  }
+
+  /** What a past order would cost to order again today, and what is missing from it. */
+  @Get(':id/repeat')
+  @Roles('CUSTOMER')
+  repeat(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number) {
+    return this.orders.repeat(user, id);
   }
 
   @Post()

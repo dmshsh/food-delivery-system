@@ -24,6 +24,12 @@ export const SECURITY_EVENTS = [
   'REGISTERED',
   'ROLE_DENIED',
   'ADMIN_ACTION',
+  'IP_BLOCKED',
+  'IP_UNBLOCKED',
+  'PASSWORD_CHANGED',
+  'PASSWORD_RESET_REQUESTED',
+  'PASSWORD_RESET_USED',
+  'PROFILE_UPDATED',
 ] as const;
 export type SecurityEventKind = (typeof SECURITY_EVENTS)[number];
 
@@ -41,6 +47,14 @@ export const EVENT_SEVERITY: Record<SecurityEventKind, Severity> = {
   ACCOUNT_UNBLOCKED: 'WARNING',
   ACCOUNT_BLOCKED: 'CRITICAL',
   BLOCKED_LOGIN_ATTEMPT: 'CRITICAL',
+  IP_BLOCKED: 'CRITICAL',
+  IP_UNBLOCKED: 'WARNING',
+  // Changing a password is ordinary; being sent a reset link, or using one, is
+  // the moment an account can be taken over, so both are worth a warning.
+  PASSWORD_CHANGED: 'WARNING',
+  PASSWORD_RESET_REQUESTED: 'WARNING',
+  PASSWORD_RESET_USED: 'CRITICAL',
+  PROFILE_UPDATED: 'INFO',
 };
 
 export function isSecurityEventKind(value: unknown): value is SecurityEventKind {
@@ -84,4 +98,64 @@ export function describeWait(seconds: number): string {
   if (seconds <= 60) return `${seconds} second${seconds === 1 ? '' : 's'}`;
   const minutes = Math.ceil(seconds / 60);
   return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+// ---------------------------------------------------------------------------
+// Blocking by address.
+//
+// Blocking an account stops an attack aimed at one person. It does nothing
+// against someone working through a list of accounts from the same machine:
+// each account collects one or two failures, none reaches five, and the attempt
+// runs for as long as it likes. Counting failures per address closes that, so
+// the two limits sit side by side and cover different attacks.
+// ---------------------------------------------------------------------------
+
+/** Failed sign-ins from one address, across all accounts, before the address is blocked. */
+export const MAX_IP_FAILURES = 15;
+
+/** The window those failures are counted in. */
+export const IP_WINDOW_MINUTES = 15;
+
+/** How long an automatic address block lasts: longer than an account block, since it follows a broader attempt. */
+export const IP_BLOCK_MINUTES = 60;
+
+export function shouldBlockIp(failuresInWindow: number): boolean {
+  return failuresInWindow >= MAX_IP_FAILURES;
+}
+
+export function ipBlockUntil(now: Date): Date {
+  return new Date(now.getTime() + IP_BLOCK_MINUTES * 60 * 1000);
+}
+
+export function ipWindowStart(now: Date): Date {
+  return new Date(now.getTime() - IP_WINDOW_MINUTES * 60 * 1000);
+}
+
+/**
+ * Is this address blocked right now?
+ *
+ * A manual block has no end time and lasts until an administrator lifts it; an
+ * automatic one carries the moment it runs out. A row with neither is not a block.
+ */
+export function isIpBlocked(
+  row: { manual?: boolean; blocked_until?: Date | string | null } | null | undefined,
+  now: Date,
+): boolean {
+  if (!row) return false;
+  if (row.manual) return true;
+  return blockSecondsLeft(row.blocked_until ?? null, now) > 0;
+}
+
+/**
+ * Addresses that are never blocked.
+ *
+ * Behind the Next.js proxy every request arrives from the proxy itself, so in a
+ * single-machine deployment one blocked address would lock out everybody. The
+ * loopback addresses are therefore counted but never blocked. A real deployment
+ * puts the true client address in X-Forwarded-For, and those are blocked normally.
+ */
+const NEVER_BLOCKED = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost', '']);
+
+export function isBlockableIp(ip: string): boolean {
+  return !NEVER_BLOCKED.has((ip ?? '').trim().toLowerCase());
 }

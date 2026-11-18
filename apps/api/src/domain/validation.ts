@@ -1,4 +1,8 @@
 // Input validation for registration and checkout. Pure functions, no framework imports.
+//
+// Every file in `domain/` imports nothing but Node built-ins. That is what lets
+// `npm test` run these rules straight from the TypeScript source, with no build
+// step and no mocking: the tests exercise the same code the server runs.
 import { createHash } from 'node:crypto';
 
 export class ValidationError extends Error {
@@ -7,6 +11,60 @@ export class ValidationError extends Error {
     super(message);
     this.code = code;
   }
+}
+
+// ---------- passwords ----------
+
+export const MIN_PASSWORD_LENGTH = 8;
+export const MAX_PASSWORD_LENGTH = 128;
+
+/**
+ * Passwords so common they are tried first in any attack. A short list on
+ * purpose: it catches the worst choices without pretending to be a dictionary.
+ */
+const TOO_COMMON = new Set([
+  'password', 'password1', 'passw0rd', '12345678', '123456789', '1234567890',
+  'qwertyui', 'qwerty123', 'iloveyou', 'admin123', 'welcome1', 'letmein1',
+  'abc12345', 'football', 'baseball', 'sunshine', 'princess', 'starwars',
+]);
+
+/**
+ * A password has to be long enough, mixed enough to survive a guess, and not be
+ * the person's own name or email, which is the first thing anyone would try.
+ *
+ * Cyrillic counts as letters: the site is read in Russian and Kazakh, and a
+ * password written in those alphabets must not be refused for "having no letters".
+ */
+export function validatePassword(value: unknown, owner: { email?: string; fullName?: string } = {}): string {
+  if (typeof value !== 'string') throw new ValidationError('Enter a password.', 'weak_password');
+  if (value.length < MIN_PASSWORD_LENGTH || value.length > MAX_PASSWORD_LENGTH) {
+    throw new ValidationError(
+      `Use a password with ${MIN_PASSWORD_LENGTH} to ${MAX_PASSWORD_LENGTH} characters.`,
+      'weak_password',
+    );
+  }
+  if (!/[a-zA-ZЀ-ӿ]/.test(value) || !/[0-9]/.test(value)) {
+    throw new ValidationError('Use at least one letter and one digit.', 'weak_password');
+  }
+  const lower = value.toLowerCase();
+  if (TOO_COMMON.has(lower)) {
+    throw new ValidationError('This password is one of the most common ones. Choose another.', 'weak_password');
+  }
+  const localPart = (owner.email ?? '').split('@')[0]?.toLowerCase();
+  if (localPart && localPart.length >= 4 && lower.includes(localPart)) {
+    throw new ValidationError('A password must not contain your email address.', 'weak_password');
+  }
+  for (const part of (owner.fullName ?? '').toLowerCase().split(/\s+/)) {
+    if (part.length >= 4 && lower.includes(part)) {
+      throw new ValidationError('A password must not contain your name.', 'weak_password');
+    }
+  }
+  return value;
+}
+
+/** True when this password is one of the few the list above refuses outright. */
+export function isCommonPassword(value: string): boolean {
+  return TOO_COMMON.has((value ?? '').toLowerCase());
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -28,6 +86,8 @@ export interface RegistrationInput {
   phone: string;
   address: string;
   password: string;
+  /** The language the site answers in. Added at registration, changeable in the profile. */
+  language: Language;
 }
 
 export function validateRegistration(data: unknown): RegistrationInput {
@@ -37,12 +97,36 @@ export function validateRegistration(data: unknown): RegistrationInput {
   const phone = text(data.phone, 'phone number', 30);
   const address = text(data.address, 'address', 240);
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ValidationError('Please enter a valid email address.');
-  if (!/^[+0-9 ()-]{7,30}$/.test(phone)) throw new ValidationError('Please enter a valid phone number.');
-  const password = data.password;
-  if (typeof password !== 'string' || password.length < 8 || password.length > 128) {
-    throw new ValidationError('Use a password with 8 to 128 characters.');
-  }
-  return { fullName, email, phone, address, password };
+  if (!isPhone(phone)) throw new ValidationError('Please enter a valid phone number.');
+  const language = validateLanguage(data.language ?? DEFAULT_LANGUAGE);
+  // The password is judged against the name and the email, because "alice2024"
+  // for alice@example.test is the first guess anyone would make.
+  const password = validatePassword(data.password, { email, fullName });
+  return { fullName, email, phone, address, password, language };
+}
+
+/** A phone number: 7 to 15 digits, with the usual spacing and brackets allowed around them. */
+export function isPhone(value: string): boolean {
+  if (!/^[+0-9 ()-]{7,30}$/.test(value)) return false;
+  const digits = phoneDigits(value);
+  return digits.length >= 7 && digits.length <= 15;
+}
+
+/**
+ * Only the digits of a phone number.
+ *
+ * Two people cannot share a number, but the same number can be written in many
+ * ways, so "+7 700 111 22 33" and "77001112233" have to compare equal. The same
+ * reduction exists in the database as `phone_digits()`, and a test keeps the two
+ * in step.
+ */
+export function phoneDigits(value: string): string {
+  return digitsOnly(value);
+}
+
+/** Just the digits of a string. Used for phone numbers, and for "is this search an order number?". */
+export function digitsOnly(value: string): string {
+  return (value ?? '').replace(/[^0-9]/g, '');
 }
 
 // ---------- checkout ----------
@@ -239,4 +323,155 @@ export function validateAccess(data: unknown): AccessInput {
   }
   if (action === 'block' && !reason.trim()) throw new ValidationError('Write why this account is being blocked.');
   return { action: action as AccessAction, reason: reason.trim() };
+}
+
+// ---------- languages ----------
+
+/** The languages the site speaks: English, Russian, Kazakh. */
+export const LANGUAGES = ['en', 'ru', 'kk'] as const;
+export type Language = (typeof LANGUAGES)[number];
+export const DEFAULT_LANGUAGE: Language = 'en';
+
+export function isLanguage(value: unknown): value is Language {
+  return typeof value === 'string' && (LANGUAGES as readonly string[]).includes(value);
+}
+
+export function validateLanguage(value: unknown): Language {
+  if (!isLanguage(value)) throw new ValidationError('Choose English, Russian or Kazakh.', 'bad_language');
+  return value;
+}
+
+/**
+ * Picks the best language from an Accept-Language header, for a visitor who has
+ * never chosen one. Unknown languages fall back to English rather than failing.
+ */
+export function languageFromHeader(header: unknown): Language {
+  if (typeof header !== 'string') return DEFAULT_LANGUAGE;
+  const ranked = header
+    .split(',')
+    .map((part) => {
+      const [tag, ...params] = part.trim().split(';');
+      const q = params.find((p) => p.trim().startsWith('q='));
+      return { tag: tag.trim().toLowerCase(), q: q ? Number(q.split('=')[1]) || 0 : 1 };
+    })
+    .sort((a, b) => b.q - a.q);
+  for (const { tag } of ranked) {
+    const base = tag.split('-')[0];
+    if (isLanguage(base)) return base;
+    if (base === 'kz') return 'kk'; // a common mistake: kz is the country, kk is the language
+  }
+  return DEFAULT_LANGUAGE;
+}
+
+// ---------- profile ----------
+
+export interface ProfileInput {
+  fullName: string;
+  phone: string;
+  address: string;
+  language: Language;
+}
+
+/** What a customer may change about themselves. The email and the role are not on the list. */
+export function validateProfile(data: unknown): ProfileInput {
+  if (!isObject(data)) throw new ValidationError('The request must contain a JSON object.');
+  const fullName = text(data.fullName, 'full name', 80);
+  const phone = text(data.phone, 'phone number', 30);
+  const address = text(data.address, 'address', 240);
+  if (!isPhone(phone)) throw new ValidationError('Please enter a valid phone number.');
+  return { fullName, phone, address, language: validateLanguage(data.language ?? DEFAULT_LANGUAGE) };
+}
+
+// ---------- passwords: change, forget, reset ----------
+
+export interface PasswordChangeInput {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export function validatePasswordChange(data: unknown): PasswordChangeInput {
+  if (!isObject(data)) throw new ValidationError('The request must contain a JSON object.');
+  const currentPassword = data.currentPassword;
+  if (typeof currentPassword !== 'string' || !currentPassword) {
+    throw new ValidationError('Enter your current password.');
+  }
+  const newPassword = validatePassword(data.newPassword);
+  if (newPassword === currentPassword) {
+    throw new ValidationError('The new password must be different from the current one.', 'password_unchanged');
+  }
+  return { currentPassword, newPassword };
+}
+
+/** The email on the "I forgot my password" form. */
+export function validateEmail(data: unknown): string {
+  const email = isObject(data) ? data.email : undefined;
+  if (typeof email !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()) || email.trim().length > 160) {
+    throw new ValidationError('Please enter a valid email address.');
+  }
+  return email.trim().toLowerCase();
+}
+
+export interface ResetInput {
+  token: string;
+  password: string;
+}
+
+export function validateReset(data: unknown): ResetInput {
+  if (!isObject(data)) throw new ValidationError('The request must contain a JSON object.');
+  const token = data.token;
+  if (typeof token !== 'string' || token.length < 10 || token.length > 200) {
+    throw new ValidationError('This reset link is not valid. Ask for a new one.', 'bad_reset_token');
+  }
+  return { token, password: validatePassword(data.password) };
+}
+
+// ---------- order history: search and filters ----------
+
+export const MAX_SEARCH_LENGTH = 60;
+
+export interface HistoryFilter {
+  status: string | null;
+  /** Free text: matched against the order number, the dishes and the address. */
+  search: string | null;
+  from: Date | null;
+  to: Date | null;
+}
+
+/**
+ * The filters above the order history.
+ *
+ * Everything is optional, and anything missing means "do not narrow by this".
+ * A search longer than the limit, or a date that is not a date, is a mistake
+ * worth saying out loud rather than quietly ignoring.
+ */
+export function validateHistoryFilter(data: unknown, isStatus: (value: unknown) => boolean): HistoryFilter {
+  const raw = isObject(data) ? data : {};
+
+  let status: string | null = null;
+  if (raw.status !== undefined && raw.status !== '') {
+    if (!isStatus(raw.status)) throw new ValidationError('Choose a valid order status.', 'bad_status');
+    status = raw.status as string;
+  }
+
+  let search: string | null = null;
+  if (raw.search !== undefined && raw.search !== null && String(raw.search).trim() !== '') {
+    const value = String(raw.search).trim();
+    if (value.length > MAX_SEARCH_LENGTH) {
+      throw new ValidationError(`A search can have at most ${MAX_SEARCH_LENGTH} characters.`, 'search_too_long');
+    }
+    search = value;
+  }
+
+  const date = (value: unknown, field: string): Date | null => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = new Date(String(value));
+    if (Number.isNaN(parsed.getTime())) throw new ValidationError(`Enter a valid ${field} date.`, 'bad_date');
+    return parsed;
+  };
+  const from = date(raw.from, 'start');
+  const to = date(raw.to, 'end');
+  if (from && to && from > to) {
+    throw new ValidationError('The start date must come before the end date.', 'bad_range');
+  }
+  return { status, search, from, to };
 }

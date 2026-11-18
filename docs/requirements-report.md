@@ -1,10 +1,12 @@
 # Food Delivery System — Requirements Report
 
 **Project:** Food Delivery System (one restaurant, synthetic data, simulated payments)
-**Report date:** 11 November 2026
+**Report date:** 19 November 2026
 **Scope of this report:** the full requirement set, what is implemented, and how each requirement was
-verified. It covers the first delivery (ordering, payment simulation, roles, accounting) and the second
-delivery (drag and drop, bonus points, feedback, admin panel, sign-in security).
+verified. It covers the first delivery (ordering, payment simulation, roles, accounting), the second
+(drag and drop, bonus points, feedback, admin panel, sign-in security) and the third (languages, mobile
+layout, profile, password reset, blocking by address, history search, repeat ordering, the newer
+reports, uniqueness and deployment).
 
 ---
 
@@ -157,6 +159,109 @@ pure rules, "DB" a test against a real PostgreSQL, "E2E" a check over HTTP again
 
 ---
 
+### 3.10 Languages *(third delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-66 | The whole interface reads in English, Russian or Kazakh | `web/src/i18n/dictionaries.ts` | Unit |
+| FR-67 | A missing translation is a compile error, not something a visitor finds | English defines the `Dictionary` type | compiler, Unit |
+| FR-68 | No translation loses or invents a `{placeholder}` | `i18n.test.ts` | Unit |
+| FR-69 | The language is chosen at registration, changed in the profile, and follows the account to another device | `users.preferred_language` | E2E |
+| FR-70 | A visitor who has never chosen one gets their browser's language, falling back to English | `languageFromHeader`, `I18nProvider` | Unit |
+| FR-71 | Server answers carry a short code, and the codes a person is likely to meet are translated | `translateError` | code review |
+| FR-72 | Money and dates are formatted for the chosen language | `format.ts` | manual |
+
+### 3.11 Mobile layout *(third delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-73 | The page is laid out for the device's real width | `viewport` in `layout.tsx` | manual |
+| FR-74 | On a narrow screen the navigation collapses behind one button and opens as the same list | `Header.tsx` | manual |
+| FR-75 | Wide tables scroll rather than crushing their columns | `overflow-x-auto`, `min-w` | manual |
+| FR-76 | The bonus history becomes cards on a phone | `bonus/page.tsx` | manual |
+| FR-77 | The history filters fold away on a phone | `orders/page.tsx` | manual |
+
+### 3.12 Profile and account details *(third delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-78 | Every signed-in role can read and edit their own name and language | `profile.service.ts` | E2E |
+| FR-79 | Customers also edit their phone and delivery address; staff have neither | same | E2E |
+| FR-80 | The email and the role can never be changed through the profile form | same | E2E |
+| FR-81 | The profile shows how many orders were placed, how many delivered, and how much was paid | same | E2E |
+
+### 3.13 Passwords *(third delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-82 | A password needs 8 characters, a letter and a digit, and may not be a common one | `validatePassword` | Unit, E2E |
+| FR-83 | A password may not contain the owner's own name or email | same | Unit, E2E |
+| FR-84 | Cyrillic counts as letters | same | Unit |
+| FR-85 | "I forgot my password" answers the same way whether or not the account exists | `password.service.ts` | E2E |
+| FR-86 | A reset link lasts 30 minutes and works exactly once | same | Unit, E2E |
+| FR-87 | Only the hash of a reset token is stored | `hashResetToken` | Unit, DB |
+| FR-88 | Asking for a new link retires the previous one | `password.service.ts` | E2E |
+| FR-89 | Changing a password requires the current one | same | E2E |
+| FR-90 | Changing or resetting a password signs out every other session, exactly and immediately | `users.token_version`, `isSessionCurrent` | Unit, E2E |
+| FR-91 | The browser that changed the password stays signed in | `AuthService.reissue` | E2E |
+
+### 3.14 Blocking by address *(third delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-92 | Fifteen failed sign-ins from one address within fifteen minutes block it for an hour | `domain/security.ts`, `IpGuardService` | Unit |
+| FR-93 | The address is checked before the email is looked up, so a sweep learns nothing | `auth.service.ts` | code review, E2E |
+| FR-94 | One failure counts against both the account and the address | same | code review |
+| FR-95 | The administrator can block and unblock an address by hand, with a reason | `admin.controller.ts` | E2E |
+| FR-96 | The server's own address can never be blocked | `isBlockableIp` | Unit, E2E |
+| FR-97 | Addresses collecting failures but not yet blocked are listed for the administrator | `IpGuardService.suspicious` | E2E |
+
+### 3.15 Order history and repeating *(third delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-98 | The history searches by dish, address, note and order number | `orders.service.ts` | E2E |
+| FR-99 | The history filters by status and by date range | same | Unit, E2E |
+| FR-100 | An end date covers the whole of that day | same | E2E |
+| FR-101 | A past order can be ordered again | `orders.service.ts`, `orders/page.tsx` | E2E |
+| FR-102 | Repeating reports what has left the menu and what now costs something different, before the cart changes | same | E2E |
+| FR-103 | Only the customer's own order can be repeated | same | E2E |
+
+### 3.16 The newer reports *(third delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-104 | Money and orders per day, with the best day and the average order | `report-views.service.ts` | E2E |
+| FR-105 | Sales per dish, with the share of revenue and the dishes never ordered | same | E2E |
+| FR-106 | Orders, spending and ratings per customer | same | E2E |
+| FR-107 | All three count approved payments only | same | E2E |
+| FR-108 | All three take a date range and refuse a broken one | same | E2E |
+| FR-109 | All three download as CSV, quoting any value that holds a comma | `toCsv` | E2E |
+| FR-110 | The administrator may read the reports as well as the accountant | `reports.controller.ts` | E2E |
+
+### 3.17 Uniqueness *(third delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-111 | One email belongs to one account, whatever the capitalisation | unique index + `UniquenessService` | DB, E2E |
+| FR-112 | One phone number belongs to one customer, however it is punctuated | `phone_digits()` unique index | DB, E2E |
+| FR-113 | Two dishes cannot share a name | unique index | DB, E2E |
+| FR-114 | Each rule is checked in the service for the message and in the database for the guarantee | `UniquenessService` | code review |
+| FR-115 | A uniqueness migration never rewrites or deletes existing rows to make itself fit | `schema.sql`, `cleanup-test-accounts.sql` | manual |
+
+### 3.18 Running on a server *(third delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-116 | A health endpoint answers only when the database is reachable | `health.controller.ts` | E2E |
+| FR-117 | A liveness endpoint answers as long as the process does | same | E2E |
+| FR-118 | Settings are checked once at start-up, and a misconfigured server refuses to start | `config.ts` | code review |
+| FR-119 | The development JWT secret is refused in production | same | code review |
+| FR-120 | The caller's real address is read from `X-Forwarded-For` behind a proxy | `main.ts` | code review |
+| FR-121 | Answers carry nosniff, DENY framing and a referrer policy, and do not advertise the server | same | E2E |
+| FR-122 | Shutdown lets the requests in flight finish | `enableShutdownHooks` | code review |
+| FR-123 | The whole system runs as three containers, with only the website published | `docker-compose.prod.yml` | compose validation |
+
 ## 4. Non-functional requirements
 
 | ID | Requirement | How it is met |
@@ -171,12 +276,17 @@ pure rules, "DB" a test against a real PostgreSQL, "E2E" a check over HTTP again
 | NFR-08 | The interface explains refusals in plain words | Every error carries a short code for the program and a sentence for the person |
 | NFR-09 | The project runs from a clean checkout in three commands | `npm run db:up`, `npm run dev:api`, `npm run dev:web`; the schema and demo data create themselves |
 | NFR-10 | The schema file can be applied any number of times | `CREATE … IF NOT EXISTS`, `ALTER … IF NOT EXISTS`, `DROP` before `CREATE` for functions and triggers; a test applies it twice |
+| NFR-11 | A migration never silently changes data that already exists | A uniqueness index that existing rows would break is not created; the start-up says what is in the way and names the clean-up script, and the service-level check holds the rule meanwhile |
+| NFR-12 | Session invalidation does not depend on a clock | Every token carries the account’s session generation; changing a password raises it, so old tokens are refused exactly, with no window |
+| NFR-13 | Reading whether the service is alive needs no secret | The health endpoints are public and reveal no data, because the monitor checking them has no password |
+| NFR-14 | Translations cannot drift apart | English defines the type, so a missing key fails the build; tests compare keys, emptiness and placeholders across all three |
+| NFR-15 | Every rule that matters is enforced twice | Uniqueness in the service and in an index; the password rule in the browser meter and on the server; the address limit in the sign-in path and in the journal |
 
 ---
 
 ## 5. Data model
 
-Eleven tables:
+Thirteen tables:
 
 | Table | Holds |
 |---|---|
@@ -191,6 +301,8 @@ Eleven tables:
 | `order_feedback` | One review per order, with the restaurant's reply |
 | `login_attempts` | Sign-in tries, used by the limiter |
 | `security_events` | The security journal |
+| `password_resets` | Reset links, stored as hashes, with their expiry and whether they were used |
+| `blocked_ips` | Addresses blocked automatically or by hand |
 
 ---
 
@@ -206,23 +318,42 @@ Eleven tables:
 | Bonus points | 9 | 9 | 8 |
 | Feedback | 5 | 5 | 5 |
 | Admin panel | 7 | 7 | 7 |
-| Security | 10 | 10 | 6 |
-| **Total** | **65** | **65** | **55** |
+| Security (accounts) | 10 | 10 | 6 |
+| Languages | 7 | 7 | 5 |
+| Mobile layout | 5 | 5 | 0 |
+| Profile | 4 | 4 | 4 |
+| Passwords | 10 | 10 | 10 |
+| Blocking by address | 6 | 6 | 5 |
+| History and repeating | 6 | 6 | 6 |
+| The newer reports | 7 | 7 | 7 |
+| Uniqueness | 5 | 5 | 3 |
+| Running on a server | 8 | 8 | 3 |
+| **Total** | **123** | **123** | **98** |
 
-The ten requirements without a direct automated test are the ones whose evidence is the shape of the
-code rather than an observable answer: the cookie flags, the order of the checks in the sign-in path,
-the row lock during a point transaction, the absence of any endpoint that writes to the journal, and the
-behaviour of the interface under a mouse. Each was confirmed by reading the code and by using the site.
+Twenty-five requirements have no direct automated test. They fall into three kinds, and none of them is
+untested by accident:
+
+- **The shape of the code is the evidence.** The cookie flags, the order of the checks in the sign-in
+  path, the row lock during a point transaction, the absence of any endpoint that writes to the journal,
+  the start-up configuration check, the proxy setting, graceful shutdown. Each was confirmed by reading
+  the code; an assertion would only restate it.
+- **It needs a real browser.** The drag gesture, the collapsing navigation, the scrolling tables, the
+  card layout on a phone. Driving these needs a browser automation tool the project does not install, so
+  they were checked by hand at phone and desktop widths. The endpoints behind every drag *are* tested.
+- **It needs a clock or an operator.** A block expiring on its own after fifteen or sixty minutes, and a
+  migration meeting data it refuses to touch. The arithmetic of both is covered by unit tests; the
+  operator-facing halves were exercised by hand against a real database.
 
 ## 7. Summary rating
 
 | Criterion | Assessment | Reasoning |
 |---|---|---|
-| Completeness against the plan | **Full** | Every item planned for this week — drag and drop, bonus system, feedback, admin panel, sign-in limits with a journal, and the test set — is implemented and running |
-| Correctness | **High** | 82 automated checks pass: 33 unit, 7 against a real PostgreSQL, 42 over HTTP. The fifteen checks written for the first delivery still pass unchanged, so nothing was broken on the way |
-| Defence in depth | **High** | The rules that matter are enforced at more than one level: the status graph and the feedback rule in both the service and the database, the bonus limits in both the browser and the server, and the account block in both the sign-in path and the request guard |
-| Data integrity | **High** | Constraints and triggers refuse bad data even when it arrives by direct SQL; money stays in whole tiyn and points can never fall below zero |
-| Usability | **Good** | Every drag has a button, errors are written as sentences, and the demo accounts are one click away on the sign-in page |
-| Readiness for public use | **Not ready, by design** | HTTPS, a real `JWT_SECRET`, a per-address rate limit and an external security review are still needed; the payment step is a simulation |
+| Completeness against the plan | **Full** | Every item planned for the three deliveries is implemented and running. The third added languages, a mobile layout, the profile, password reset and change, blocking by address, history search, repeat ordering, three reports, uniqueness rules and a deployment |
+| Correctness | **High** | 154 automated checks pass: 65 unit, 12 against a real PostgreSQL, 77 over HTTP. The 42 checks written for the earlier deliveries still pass unchanged, so nothing was broken on the way |
+| Defence in depth | **High** | Every rule that matters is enforced at more than one level: the status graph and the feedback rule in both the service and the database; uniqueness in both the service (for the message) and an index (for the guarantee); the password rule in both the browser meter and the server; the limits on sign-in against both the account and the address |
+| Data integrity | **High** | Constraints, triggers and unique indexes refuse bad data even when it arrives by direct SQL; money stays in whole tiyn, points can never fall below zero, and a migration that existing rows would break reports the problem rather than rewriting them |
+| Security | **Good for a prototype** | Passwords are hashed and judged against the owner's own details; reset links are stored only as hashes, last 30 minutes and work once; session invalidation is exact rather than clock-based; sign-in is limited per account and per address, and every refusal is journalled |
+| Usability | **Good** | Three languages with no untranslated gaps, a layout that works on a phone, every drag backed by a button, and errors written as sentences in the reader's language |
+| Readiness for public use | **Closer, still not ready** | Deployment, health checks, configuration validation and security headers are in place. Still missing: HTTPS in front of the site, a real mail server for reset links, and an external security review. The payment step remains a simulation |
 
-**Overall: the requirements set for this stage is met in full, and verified.**
+**Overall: the requirements set for all three stages is met in full, and verified.**

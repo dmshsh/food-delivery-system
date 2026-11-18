@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { useI18n } from '@/i18n/I18nProvider';
 import { formatKzt } from '@/lib/format';
 import { MAX_QUANTITY, setQuantity } from '@/store/cartSlice';
 import { useMenuQuery } from '@/store/api';
@@ -11,6 +12,7 @@ export default function MenuPage() {
   const { data, isLoading, isError, refetch } = useMenuQuery();
   const quantities = useAppSelector((s) => s.cart.quantities);
   const dispatch = useAppDispatch();
+  const { t, lang } = useI18n();
   const [category, setCategory] = useState('All');
 
   const items = data?.items ?? [];
@@ -21,10 +23,10 @@ export default function MenuPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold">Make time for lunch</h1>
-      <p className="mt-1 text-stone-600">Choose your dishes. We keep your order together until you check out.</p>
+      <h1 className="text-2xl font-semibold">{t('menu.title')}</h1>
+      <p className="mt-1 text-stone-600">{t('menu.subtitle')}</p>
 
-      <div className="mt-5 flex flex-wrap gap-2" role="tablist" aria-label="Menu categories">
+      <div className="mt-5 flex flex-wrap gap-2" role="tablist" aria-label={t('menu.categories')}>
         {categories.map((c) => (
           <button
             key={c}
@@ -33,15 +35,18 @@ export default function MenuPage() {
             onClick={() => setCategory(c)}
             className={c === category ? 'btn-primary' : 'btn-secondary'}
           >
-            {c}
+            {c === 'All' ? t('common.all') : c}
           </button>
         ))}
       </div>
 
-      {isLoading && <p className="mt-6 text-stone-500">Loading menu…</p>}
+      {isLoading && <p className="mt-6 text-stone-500">{t('common.loading')}</p>}
       {isError && (
         <div className="card mt-6" role="alert">
-          The menu could not be loaded. <button className="underline" onClick={() => refetch()}>Try again</button>
+          {t('menu.loadFailed')}{' '}
+          <button className="underline" onClick={() => refetch()}>
+            {t('common.retry')}
+          </button>
         </div>
       )}
 
@@ -53,19 +58,35 @@ export default function MenuPage() {
               <div>
                 <div className="flex items-baseline justify-between gap-3">
                   <h2 className="font-medium">{item.name}</h2>
-                  <span className="whitespace-nowrap font-medium text-emerald-800">{formatKzt(item.priceTiyn)}</span>
+                  <span className="whitespace-nowrap font-medium text-emerald-800">{formatKzt(item.priceTiyn, lang)}</span>
                 </div>
                 <p className="mt-1 text-sm text-stone-600">{item.description}</p>
               </div>
               {qty === 0 ? (
-                <button className="btn-primary self-start" onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: 1 }))}>
-                  Add
+                <button
+                  className="btn-primary self-start"
+                  onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: 1 }))}
+                >
+                  {t('menu.add')}
                 </button>
               ) : (
                 <div className="flex items-center gap-3 self-start">
-                  <button className="btn-secondary" aria-label={`Remove one ${item.name}`} onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: qty - 1 }))}>−</button>
+                  <button
+                    className="btn-secondary"
+                    aria-label={t('menu.removeOne', { name: item.name })}
+                    onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: qty - 1 }))}
+                  >
+                    −
+                  </button>
                   <span className="w-6 text-center" aria-live="polite">{qty}</span>
-                  <button className="btn-secondary" aria-label={`Add one ${item.name}`} disabled={qty >= MAX_QUANTITY} onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: qty + 1 }))}>+</button>
+                  <button
+                    className="btn-secondary"
+                    aria-label={t('menu.addOne', { name: item.name })}
+                    disabled={qty >= MAX_QUANTITY}
+                    onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: qty + 1 }))}
+                  >
+                    +
+                  </button>
                 </div>
               )}
             </li>
@@ -75,9 +96,12 @@ export default function MenuPage() {
 
       {count > 0 && (
         <div className="sticky bottom-4 mt-6 flex items-center justify-between gap-4 rounded-xl bg-emerald-800 px-5 py-3 text-white shadow-lg">
-          <span>{count} item{count === 1 ? '' : 's'} · {formatKzt(total)}</span>
-          <Link href="/checkout" className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-emerald-900 hover:bg-emerald-50">
-            Go to checkout
+          <span className="text-sm sm:text-base">{t('menu.itemsInCart', { count, total: formatKzt(total, lang) })}</span>
+          <Link
+            href="/checkout"
+            className="whitespace-nowrap rounded-lg bg-white px-4 py-2 text-sm font-medium text-emerald-900 hover:bg-emerald-50"
+          >
+            {t('menu.goToCheckout')}
           </Link>
         </div>
       )}

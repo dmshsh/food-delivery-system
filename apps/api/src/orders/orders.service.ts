@@ -11,7 +11,14 @@ import { AuthUser } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { POINT_TIYN, applicablePoints, maxRedeemablePoints, pointsEarned } from '../domain/bonus';
 import { KITCHEN_VISIBLE, OrderStatus, isKitchenStep, isOrderStatus } from '../domain/status';
-import { ValidationError, validateFeedback, validateOrderInput, validateOutcome } from '../domain/validation';
+import {
+  ValidationError,
+  digitsOnly,
+  validateFeedback,
+  validateHistoryFilter,
+  validateOrderInput,
+  validateOutcome,
+} from '../domain/validation';
 
 const CHECKOUT_SECONDS = 120;
 
@@ -47,11 +54,17 @@ export class OrdersService {
 
   // ---------------------------------------------------------------- reads
 
-  async list(user: AuthUser, status?: string) {
+  /**
+   * The order list, narrowed by whatever the history page asked for.
+   *
+   * The filters are for a customer looking through their own history. The
+   * kitchen queue takes the same route but stays limited to paid orders:
+   * narrowing is a convenience, the role rule is not.
+   */
+  async list(user: AuthUser, query: Record<string, unknown> = {}) {
     await this.expirePending();
-    if (status && !isOrderStatus(status)) {
-      throw new BadRequestException({ code: 'bad_status', message: 'Choose a valid order status.' });
-    }
+    const filter = validated(() => validateHistoryFilter(query, isOrderStatus));
+
     const where: string[] = [];
     const params: unknown[] = [];
     if (user.role === 'CUSTOMER') {
@@ -62,11 +75,97 @@ export class OrdersService {
       params.push([...KITCHEN_VISIBLE]);
       where.push(`o.status = ANY($${params.length}::text[])`);
     }
-    if (status) {
-      params.push(status);
+    if (filter.status) {
+      params.push(filter.status);
       where.push(`o.status = $${params.length}`);
     }
-    return { orders: (await this.load(where.join(' AND '), params)).map((r) => this.present(user, r)) };
+    if (filter.from) {
+      params.push(filter.from);
+      where.push(`o.created_at >= $${params.length}`);
+    }
+    if (filter.to) {
+      // An end date means the whole of that day, which is what someone choosing
+      // "to 5 November" means, not "up to the moment that day begins".
+      params.push(filter.to);
+      where.push(`o.created_at < $${params.length}::timestamptz + interval '1 day'`);
+    }
+    if (filter.search) {
+      // Matched against the order number, the dishes, the note and the address.
+      params.push(`%${filter.search.toLowerCase()}%`);
+      const like = `$${params.length}`;
+      params.push(digitsOnly(filter.search) || '0');
+      const digits = `$${params.length}`;
+      where.push(`(
+        o.id::text = ${digits}
+        OR lower(o.notes) LIKE ${like}
+        OR lower(o.delivery_address) LIKE ${like}
+        OR EXISTS (
+          SELECT 1 FROM order_items oi JOIN menu_items mi ON mi.id = oi.item_id
+          WHERE oi.order_id = o.id AND lower(mi.name) LIKE ${like}
+        )
+      )`);
+    }
+
+    const rows = await this.load(where.join(' AND '), params);
+    return {
+      orders: rows.map((r) => this.present(user, r)),
+      filter: {
+        status: filter.status,
+        search: filter.search,
+        from: filter.from ? filter.from.toISOString().slice(0, 10) : null,
+        to: filter.to ? filter.to.toISOString().slice(0, 10) : null,
+      },
+    };
+  }
+
+  /**
+   * "Order this again."
+   *
+   * A past order is not a shopping list that can simply be replayed: a dish may
+   * have been taken off the menu, renamed, or repriced since. So this returns
+   * what can be ordered today, what cannot, and what now costs something
+   * different, and lets the customer decide before anything goes in the cart.
+   */
+  async repeat(user: AuthUser, orderId: number) {
+    const customerId = await this.customerId(user);
+    const found = await this.db.pool.query('SELECT customer_id FROM orders WHERE id = $1', [orderId]);
+    if (!found.rows[0]) throw new NotFoundException({ code: 'not_found', message: 'This order was not found.' });
+    if (found.rows[0].customer_id !== customerId) {
+      throw new ForbiddenException({ code: 'ownership_denied', message: 'You can repeat only your own orders.' });
+    }
+
+    const { rows } = await this.db.pool.query(
+      `SELECT oi.item_id AS "itemId", oi.quantity, oi.unit_price_tiyn AS "paidPriceTiyn",
+              m.name, m.available, m.price_tiyn AS "priceTiyn"
+       FROM order_items oi
+       LEFT JOIN menu_items m ON m.id = oi.item_id
+       WHERE oi.order_id = $1
+       ORDER BY oi.item_id`,
+      [orderId],
+    );
+
+    const lines = rows.map((r) => ({
+      itemId: r.itemId,
+      name: r.name,
+      quantity: r.quantity,
+      paidPriceTiyn: Number(r.paidPriceTiyn),
+      priceTiyn: r.priceTiyn === null ? null : Number(r.priceTiyn),
+      // A dish removed from the menu has no row left to join to.
+      available: Boolean(r.available),
+      priceChanged: r.priceTiyn !== null && Number(r.priceTiyn) !== Number(r.paidPriceTiyn),
+    }));
+    const usable = lines.filter((l) => l.available);
+
+    return {
+      orderId,
+      lines,
+      /** What the cart would be filled with. Empty when nothing is on the menu any more. */
+      items: usable.map((l) => ({ itemId: l.itemId, quantity: l.quantity })),
+      totalTiyn: usable.reduce((sum, l) => sum + l.quantity * (l.priceTiyn ?? 0), 0),
+      previousTotalTiyn: lines.reduce((sum, l) => sum + l.quantity * l.paidPriceTiyn, 0),
+      unavailable: lines.filter((l) => !l.available).map((l) => l.name ?? `Dish #${l.itemId}`),
+      repricedCount: usable.filter((l) => l.priceChanged).length,
+    };
   }
 
   async detail(user: AuthUser, orderId: number) {

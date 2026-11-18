@@ -10,17 +10,43 @@ export type OrderStatus =
   | 'PAYMENT_REJECTED'
   | 'EXPIRED';
 
+export type Language = 'en' | 'ru' | 'kk';
+
 export interface User {
   id: number;
   email: string;
   fullName: string;
   role: Role;
+  language: Language;
 }
 
 export interface Profile {
   phone: string;
   address: string;
   bonusPoints: number;
+}
+
+/** The fuller picture behind the "my profile" page. */
+export interface FullProfile {
+  id: number;
+  email: string;
+  fullName: string;
+  role: Role;
+  language: Language;
+  passwordChangedAt: string;
+  phone: string | null;
+  address: string | null;
+  bonusPoints: number | null;
+  orderCount: number;
+  deliveredCount: number;
+  spentTiyn: number;
+}
+
+export interface ProfileBody {
+  fullName: string;
+  phone: string;
+  address: string;
+  language: Language;
 }
 
 export interface SessionResponse {
@@ -75,6 +101,33 @@ export interface Order {
 export interface OrderResult {
   order: Order;
   replayed: boolean;
+}
+
+/** The filters above the order history. */
+export interface HistoryFilter {
+  status?: OrderStatus | '';
+  search?: string;
+  from?: string;
+  to?: string;
+}
+
+/** What a past order would cost to order again today. */
+export interface RepeatOrder {
+  orderId: number;
+  lines: {
+    itemId: number;
+    name: string | null;
+    quantity: number;
+    paidPriceTiyn: number;
+    priceTiyn: number | null;
+    available: boolean;
+    priceChanged: boolean;
+  }[];
+  items: { itemId: number; quantity: number }[];
+  totalTiyn: number;
+  previousTotalTiyn: number;
+  unavailable: string[];
+  repricedCount: number;
 }
 
 export interface CreateOrderBody {
@@ -209,4 +262,91 @@ export interface AdminOverview {
   feedback: { count: number; average: number };
   bonus: { outstandingPoints: number };
   security: { criticalLast24h: number };
+}
+
+
+// ------------------------------------------------------------ new reports
+
+export interface DailyReport {
+  days: {
+    day: string;
+    orders: number;
+    paidTiyn: number;
+    discountTiyn: number;
+    pointsEarned: number;
+    customers: number;
+    averageOrderTiyn: number;
+  }[];
+  summary: {
+    dayCount: number;
+    orderCount: number;
+    paidTiyn: number;
+    discountTiyn: number;
+    averageOrderTiyn: number;
+    averageDayTiyn: number;
+    bestDay: { day: string; paidTiyn: number } | null;
+  };
+}
+
+export interface DishReport {
+  dishes: {
+    id: number;
+    name: string;
+    category: string;
+    available: boolean;
+    currentPriceTiyn: number;
+    quantity: number;
+    revenueTiyn: number;
+    orders: number;
+    sharePercent: number;
+  }[];
+  summary: {
+    dishCount: number;
+    soldCount: number;
+    neverOrdered: string[];
+    totalQuantity: number;
+    revenueTiyn: number;
+  };
+}
+
+export interface CustomerReport {
+  customers: {
+    id: number;
+    fullName: string;
+    email: string;
+    bonusPoints: number;
+    orders: number;
+    paidTiyn: number;
+    lastOrderAt: string | null;
+    averageRating: number | null;
+    reviews: number;
+    averageOrderTiyn: number;
+  }[];
+  summary: {
+    customerCount: number;
+    activeCount: number;
+    returningCount: number;
+    paidTiyn: number;
+    averagePerCustomerTiyn: number;
+  };
+}
+
+// --------------------------------------------------------- blocked addresses
+
+export interface BlockedIp {
+  ip: string;
+  reason: string;
+  failures: number;
+  failures24h: number;
+  manual: boolean;
+  blockedUntil: string | null;
+  createdAt: string;
+  blockedByEmail: string | null;
+  active: boolean;
+}
+
+export interface IpList {
+  addresses: BlockedIp[];
+  rules: { maxFailures: number; windowMinutes: number; blockMinutes: number };
+  suspicious: { ip: string; failures: number; accounts: number; lastAt: string }[];
 }

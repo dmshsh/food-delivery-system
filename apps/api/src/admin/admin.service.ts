@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { AuthUser, Role, isRole } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { SecurityService } from '../security/security.service';
+import { UniquenessService } from '../uniqueness/uniqueness.service';
 import {
   ValidationError,
   validateAccess,
@@ -20,7 +21,11 @@ function validated<T>(fn: () => T): T {
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly db: DbService, private readonly security: SecurityService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly security: SecurityService,
+    private readonly unique: UniquenessService,
+  ) {}
 
   // -------------------------------------------------------------- overview
 
@@ -90,24 +95,28 @@ export class AdminService {
 
   async createMenuItem(user: AuthUser, body: unknown) {
     const input = validated(() => validateMenuItem(body));
-    const { rows } = await this.db.pool.query(
+    // Two dishes with one name cannot be told apart in an order or a report.
+    await this.unique.assertDishNameFree(input.name);
+    const { rows } = await this.unique.guard(() => this.db.pool.query(
       `INSERT INTO menu_items(name, description, category, price_tiyn, available, sort_order)
        VALUES ($1,$2,$3,$4,$5, COALESCE((SELECT MAX(sort_order) + 1 FROM menu_items), 0))
        RETURNING id, name, description, category, price_tiyn AS "priceTiyn", available, sort_order AS "sortOrder"`,
       [input.name, input.description, input.category, input.priceTiyn, input.available],
-    );
+    ));
     await this.logAction(user, `created dish "${input.name}" (#${rows[0].id})`);
     return { item: { ...rows[0], timesOrdered: 0 } };
   }
 
   async updateMenuItem(user: AuthUser, id: number, body: unknown) {
     const input = validated(() => validateMenuItem(body));
-    const { rows } = await this.db.pool.query(
+    // The dish keeping its own name is not a clash, so it is excluded from the check.
+    await this.unique.assertDishNameFree(input.name, id);
+    const { rows } = await this.unique.guard(() => this.db.pool.query(
       `UPDATE menu_items SET name = $2, description = $3, category = $4, price_tiyn = $5, available = $6
        WHERE id = $1
        RETURNING id, name, description, category, price_tiyn AS "priceTiyn", available, sort_order AS "sortOrder"`,
       [id, input.name, input.description, input.category, input.priceTiyn, input.available],
-    );
+    ));
     if (!rows[0]) throw new NotFoundException({ code: 'not_found', message: 'This dish was not found.' });
     await this.logAction(user, `edited dish #${id} ("${input.name}", ${input.priceTiyn} tiyn, available=${input.available})`);
     return { item: rows[0] };

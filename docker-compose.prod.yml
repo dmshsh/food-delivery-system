@@ -1,0 +1,66 @@
+# Running the whole thing the way a server would: three containers, one network.
+#
+#   docker compose -f docker-compose.prod.yml up --build
+#
+# Set JWT_SECRET first — the API refuses to start in production without one,
+# because the development default is published in this repository and anyone
+# holding it could sign a token for any account:
+#
+#   JWT_SECRET=$(openssl rand -base64 48) docker compose -f docker-compose.prod.yml up --build
+#
+# This is still a coursework prototype. A real deployment would put HTTPS in
+# front of the website, keep the database on managed storage with backups, and
+# pass the secret from a secret store rather than the shell.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-food}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-food}
+      POSTGRES_DB: ${POSTGRES_DB:-food_delivery}
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-food} -d ${POSTGRES_DB:-food_delivery}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    # Not published to the host: only the API needs to reach it, and an open
+    # database port is the easiest thing in a deployment to forget about.
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgres://${POSTGRES_USER:-food}:${POSTGRES_PASSWORD:-food}@db:5432/${POSTGRES_DB:-food_delivery}
+      # No default on purpose: the API stops at start-up and says so if it is missing.
+      JWT_SECRET: '${JWT_SECRET:?set JWT_SECRET before starting, for example with "openssl rand -base64 48"}'
+      SITE_URL: ${SITE_URL:-http://localhost:3000}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    # Also not published: the browser never talks to the API directly, the site
+    # forwards /api/* to it, which is what keeps the login cookie first-party.
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      NODE_ENV: production
+      API_URL: http://api:3001
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  pgdata_prod:

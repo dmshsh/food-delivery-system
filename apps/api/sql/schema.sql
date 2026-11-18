@@ -215,3 +215,110 @@ DROP TRIGGER IF EXISTS order_feedback_delivered ON order_feedback;
 CREATE TRIGGER order_feedback_delivered
   BEFORE INSERT ON order_feedback
   FOR EACH ROW EXECUTE FUNCTION enforce_feedback_on_delivered();
+
+-- ============================================================================
+-- Week 3 additions: registration language, profile editing, password reset and
+-- change, blocking by IP address, uniqueness rules, and the indexes the order
+-- history search needs. Idempotent, like everything above.
+-- ============================================================================
+
+-- ---------------------------------------------------------------- language
+-- The language a person reads the site in. Chosen at registration, changed in
+-- the profile, and remembered server-side so it follows the account to any device.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language TEXT NOT NULL DEFAULT 'en';
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_language_check;
+ALTER TABLE users ADD CONSTRAINT users_language_check CHECK (preferred_language IN ('en', 'ru', 'kk'));
+
+-- ---------------------------------------------------------------- passwords
+-- When the password last changed. Tokens issued before that moment stop working,
+-- so changing a password really does sign the other devices out.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- Which generation of sessions is currently valid.
+--
+-- "Changing your password signs out your other devices" cannot be decided from
+-- the clock: a JWT records when it was issued in whole seconds, so a token
+-- issued at 10:00:00.8 and a password changed at 10:00:00.9 are
+-- indistinguishable, and any comparison leaves a window of up to a second in
+-- which an old session survives. A counter has no such ambiguity: every token
+-- carries the number it was signed with, changing a password raises it, and
+-- every token carrying the old number is refused from that instant.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
+
+-- A reset link. Only the HASH of the token is stored: a stolen database must not
+-- hand the thief working reset links.
+CREATE TABLE IF NOT EXISTS password_resets (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at    TIMESTAMPTZ,
+  created_ip TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS password_resets_user_idx ON password_resets (user_id, created_at DESC);
+
+-- ------------------------------------------------------------ IP blocking
+-- Blocking one account does not stop someone working through a list of accounts
+-- from the same machine. This blocks the source instead of the target.
+CREATE TABLE IF NOT EXISTS blocked_ips (
+  ip          TEXT PRIMARY KEY CHECK (length(ip) BETWEEN 1 AND 60),
+  reason      TEXT NOT NULL DEFAULT '' CHECK (length(reason) <= 200),
+  failures    INTEGER NOT NULL DEFAULT 0 CHECK (failures >= 0),
+  blocked_until TIMESTAMPTZ,              -- NULL with manual = TRUE means "until lifted by hand"
+  manual      BOOLEAN NOT NULL DEFAULT FALSE,
+  blocked_by  INTEGER REFERENCES users (id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS blocked_ips_until_idx ON blocked_ips (blocked_until);
+
+-- ------------------------------------------------------------- uniqueness
+-- One phone number belongs to one customer. Without this, two accounts can claim
+-- the same person, and a courier calling the number reaches the wrong order.
+-- Stored digits only, so "+7 700 111 22 33" and "+77001112233" are the same number.
+CREATE OR REPLACE FUNCTION phone_digits(value TEXT) RETURNS TEXT AS $$
+  SELECT regexp_replace(COALESCE(value, ''), '[^0-9]', '', 'g');
+$$ LANGUAGE sql IMMUTABLE;
+
+-- A uniqueness rule cannot be added to a table that already breaks it, and a
+-- migration must never quietly rewrite or delete rows to make itself fit. So the
+-- index is created when the data allows it, and otherwise the start-up says
+-- loudly what is in the way. Until it is created, UniquenessService still
+-- refuses duplicates, so the running system keeps the guarantee either way.
+DO $$
+DECLARE
+  clashes INTEGER;
+BEGIN
+  SELECT count(*) INTO clashes FROM (
+    SELECT 1 FROM customers GROUP BY phone_digits(phone) HAVING count(*) > 1
+  ) AS duplicated;
+  IF clashes = 0 THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS customers_phone_digits_key ON customers (phone_digits(phone));
+  ELSE
+    RAISE WARNING 'customers_phone_digits_key not created: % phone number(s) are used by more than one customer. Run sql/cleanup-test-accounts.sql, or merge the accounts by hand, then restart.', clashes;
+  END IF;
+END $$;
+
+-- Two dishes with the same name cannot be told apart in an order or a report.
+DO $$
+DECLARE
+  clashes INTEGER;
+BEGIN
+  SELECT count(*) INTO clashes FROM (
+    SELECT 1 FROM menu_items GROUP BY lower(btrim(name)) HAVING count(*) > 1
+  ) AS duplicated;
+  IF clashes = 0 THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS menu_items_name_lower_key ON menu_items (lower(btrim(name)));
+  ELSE
+    RAISE WARNING 'menu_items_name_lower_key not created: % dish name(s) appear more than once. Rename them in the admin panel, then restart.', clashes;
+  END IF;
+END $$;
+
+-- One open reset link per user at a time: issuing a new one retires the old,
+-- which the service does explicitly. This index makes finding the live one cheap.
+CREATE INDEX IF NOT EXISTS password_resets_live_idx ON password_resets (user_id) WHERE used_at IS NULL;
+
+-- ------------------------------------------------- order history search
+-- The history page searches by dish name and filters by date, for one customer
+-- at a time, so the useful index is the customer with the date.
+CREATE INDEX IF NOT EXISTS orders_customer_created_idx ON orders (customer_id, created_at DESC);

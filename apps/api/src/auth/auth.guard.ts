@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable, Unauthor
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { DbService } from '../db/db.service';
+import { isSessionCurrent } from '../domain/password';
 import { blockSecondsLeft, describeWait } from '../domain/security';
 import { SecurityService } from '../security/security.service';
 import { ROLES_KEY } from './roles.decorator';
@@ -33,14 +34,19 @@ export class AuthGuard implements CanActivate {
     if (!token) throw unauthorized();
 
     let userId: number;
+    let tokenVersion: unknown;
     try {
-      userId = Number((await this.jwt.verifyAsync<{ sub: number }>(token)).sub);
+      const payload = await this.jwt.verifyAsync<{ sub: number; ver?: number }>(token);
+      userId = Number(payload.sub);
+      tokenVersion = payload.ver;
     } catch {
       throw unauthorized();
     }
 
     const { rows } = await this.db.pool.query(
-      'SELECT id, email, full_name, role, is_active, blocked_until, block_reason FROM users WHERE id = $1',
+      `SELECT id, email, full_name, role, is_active, blocked_until, block_reason,
+              preferred_language, token_version
+       FROM users WHERE id = $1`,
       [userId],
     );
     if (!rows[0]) throw unauthorized();
@@ -58,6 +64,23 @@ export class AuthGuard implements CanActivate {
       throw new ForbiddenException({
         code: 'account_disabled',
         message: 'This account has been blocked by an administrator. Please contact support.',
+      });
+    }
+
+    // A token from an earlier generation belongs to a session opened before the
+    // password changed. Refusing it is what makes "other devices have been
+    // signed out" true, rather than a sentence on a screen.
+    if (!isSessionCurrent(tokenVersion, record.token_version)) {
+      await this.security.log({
+        kind: 'LOGIN_FAILED',
+        userId: record.id,
+        email: record.email,
+        ip,
+        detail: 'a session from before the password changed was refused',
+      });
+      throw new UnauthorizedException({
+        code: 'password_changed',
+        message: 'Your password was changed. Please sign in again.',
       });
     }
 
@@ -82,6 +105,7 @@ export class AuthGuard implements CanActivate {
       email: record.email,
       fullName: record.full_name,
       role: record.role,
+      language: record.preferred_language,
     };
     request.user = user;
 

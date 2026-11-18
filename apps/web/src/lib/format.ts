@@ -1,27 +1,40 @@
+import type { Language, MessageKey } from '@/i18n/dictionaries';
 import type { OrderStatus } from './types';
 
-export function formatKzt(tiyn: number): string {
-  return `${(tiyn / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })} KZT`;
+/** Which locale each language formats numbers and dates with. */
+const LOCALES: Record<Language, string> = { en: 'en-US', ru: 'ru-RU', kk: 'kk-KZ' };
+
+export function localeOf(lang: Language | string | undefined): string {
+  return LOCALES[(lang as Language) ?? 'en'] ?? 'en-US';
 }
 
-export function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+/** Money, always from whole tiyn, never from a floating point total. */
+export function formatKzt(tiyn: number, lang: Language | string = 'en'): string {
+  const amount = (tiyn / 100).toLocaleString(localeOf(lang), { maximumFractionDigits: 2 });
+  return lang === 'en' ? `${amount} KZT` : `${amount} ₸`;
 }
 
-export function formatDelivery(deliveryTime: string | null): string {
-  return deliveryTime ? formatDateTime(deliveryTime) : 'As soon as possible';
+export function formatDateTime(iso: string, lang: Language | string = 'en'): string {
+  return new Date(iso).toLocaleString(localeOf(lang), { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-export const STATUS_LABEL: Record<OrderStatus, string> = {
-  PENDING: 'Waiting for payment',
-  CONFIRMED: 'Confirmed',
-  PREPARING: 'Preparing',
-  READY: 'Ready',
-  DELIVERED: 'Delivered',
-  CANCELLED: 'Cancelled',
-  PAYMENT_REJECTED: 'Payment rejected',
-  EXPIRED: 'Time limit passed',
-};
+export function formatDate(iso: string, lang: Language | string = 'en'): string {
+  return new Date(iso).toLocaleDateString(localeOf(lang), { dateStyle: 'medium' });
+}
+
+export function formatNumber(value: number, lang: Language | string = 'en'): string {
+  return value.toLocaleString(localeOf(lang));
+}
+
+/** The message key for a status, so the label comes from the dictionary. */
+export function statusKey(status: OrderStatus): MessageKey {
+  return `status.${status}` as MessageKey;
+}
+
+/** The message key for a role. */
+export function roleKey(role: string): MessageKey {
+  return `role.${role}` as MessageKey;
+}
 
 export const STATUS_STYLE: Record<OrderStatus, string> = {
   PENDING: 'bg-amber-100 text-amber-900',
@@ -34,7 +47,16 @@ export const STATUS_STYLE: Record<OrderStatus, string> = {
   EXPIRED: 'bg-red-100 text-red-900',
 };
 
-export const ALL_STATUSES = Object.keys(STATUS_LABEL) as OrderStatus[];
+export const ALL_STATUSES: OrderStatus[] = [
+  'PENDING',
+  'CONFIRMED',
+  'PREPARING',
+  'READY',
+  'DELIVERED',
+  'CANCELLED',
+  'PAYMENT_REJECTED',
+  'EXPIRED',
+];
 
 /** Readable message from an RTK Query error (server message, or a network problem). */
 export function errorMessage(error: unknown): string {
@@ -50,15 +72,32 @@ export function errorCode(error: unknown): string | undefined {
   return (error as { data?: { code?: string } } | undefined)?.data?.code;
 }
 
-/** True when the request may not have reached the server (so it is safe and right to retry the SAME attempt). */
-export function isNetworkError(error: unknown): boolean {
+/**
+ * The same error, in the reader's language where we have a translation for it.
+ *
+ * The API answers in English and carries a short code alongside each message.
+ * Codes we know are translated; anything else keeps the server's own sentence,
+ * which is more useful than a generic "something went wrong".
+ */
+export function translateError(
+  error: unknown,
+  t: (key: MessageKey, vars?: Record<string, string | number>) => string,
+): string {
   const status = (error as { status?: number | string } | undefined)?.status;
-  return status === 'FETCH_ERROR' || status === 'TIMEOUT_ERROR';
+  if (status === 'FETCH_ERROR' || status === 'TIMEOUT_ERROR') return t('common.networkError');
+  const code = errorCode(error);
+  if (code) {
+    const key = `error.${code}` as MessageKey;
+    const translated = t(key);
+    if (translated !== key) return translated;
+  }
+  const fallback = errorMessage(error);
+  return fallback === 'Something went wrong.' ? t('common.error') : fallback;
 }
 
-/** "120 points" / "1 point". */
-export function formatPoints(points: number): string {
-  return `${points.toLocaleString('en-US')} point${points === 1 ? '' : 's'}`;
+/** "120 points" / "1 point" — the word comes from the dictionary. */
+export function formatPoints(points: number, lang: Language | string = 'en', word = 'points'): string {
+  return `${formatNumber(points, lang)} ${word}`;
 }
 
 /** Filled and empty stars, for a rating that is always a whole number from 1 to 5. */
@@ -73,15 +112,29 @@ export const SEVERITY_STYLE: Record<string, string> = {
   CRITICAL: 'bg-red-100 text-red-900',
 };
 
-/** LOGIN_FAILED -> "Login failed". */
+/** LOGIN_FAILED -> "Login failed". Event names stay in English: they are a technical record. */
 export function humanEvent(kind: string): string {
   const words = kind.toLowerCase().split('_');
   return words[0].charAt(0).toUpperCase() + words[0].slice(1) + (words.length > 1 ? ' ' + words.slice(1).join(' ') : '');
 }
 
-export const ROLE_LABEL: Record<string, string> = {
-  CUSTOMER: 'Customer',
-  KITCHEN: 'Kitchen',
-  ACCOUNTANT: 'Accountant',
-  ADMIN: 'Administrator',
-};
+/** True when the request may not have reached the server (so it is safe and right to retry the SAME attempt). */
+export function isNetworkError(error: unknown): boolean {
+  const status = (error as { status?: number | string } | undefined)?.status;
+  return status === 'FETCH_ERROR' || status === 'TIMEOUT_ERROR';
+}
+
+/** Rough password strength, mirroring the rule the server applies. */
+export type Strength = 'weak' | 'fair' | 'strong';
+
+export function passwordStrength(value: string): Strength {
+  if (typeof value !== 'string' || value.length < 8) return 'weak';
+  let variety = 0;
+  if (/[a-zа-я]/.test(value)) variety++;
+  if (/[A-ZА-Я]/.test(value)) variety++;
+  if (/[0-9]/.test(value)) variety++;
+  if (/[^a-zA-Z0-9Ѐ-ӿ]/.test(value)) variety++;
+  if (value.length >= 12 && variety >= 3) return 'strong';
+  if (value.length >= 10 && variety >= 2) return 'fair';
+  return variety >= 3 ? 'fair' : 'weak';
+}

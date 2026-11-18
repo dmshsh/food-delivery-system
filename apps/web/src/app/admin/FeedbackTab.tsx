@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { errorMessage, formatDateTime, stars } from '@/lib/format';
+import { useI18n } from '@/i18n/I18nProvider';
+import { formatDateTime, stars, translateError } from '@/lib/format';
 import { useFeedbackListQuery, useReplyToFeedbackMutation } from '@/store/api';
 
 export default function FeedbackTab() {
+  const { t, lang } = useI18n();
   const [rating, setRating] = useState<number | ''>('');
   const { data, isLoading, error } = useFeedbackListQuery({ rating });
   const [replyTo, reply] = useReplyToFeedbackMutation();
@@ -20,14 +22,14 @@ export default function FeedbackTab() {
       await replyTo({ id: openId, reply: text.trim() }).unwrap();
       setOpenId(null);
       setText('');
-      setMessage('Your reply is now shown to the customer under their order.');
+      setMessage(t('admin.replySent'));
     } catch (err) {
-      setMessage(errorMessage(err));
+      setMessage(translateError(err, t));
     }
   }
 
-  if (isLoading) return <p className="text-stone-500">Loading…</p>;
-  if (error != null) return <p role="alert" className="text-red-700">{errorMessage(error)}</p>;
+  if (isLoading) return <p className="text-stone-500">{t('common.loading')}</p>;
+  if (error != null) return <p role="alert" className="text-red-700">{translateError(error, t)}</p>;
 
   const summary = data?.summary;
 
@@ -35,14 +37,14 @@ export default function FeedbackTab() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-lg font-medium">Customer reviews</h2>
-          <p className="text-sm text-stone-600">One review per delivered order. A reply appears under the order the customer sees.</p>
+          <h2 className="text-lg font-medium">{t('admin.tab.feedback')}</h2>
+          <p className="text-sm text-stone-600">{t('admin.reviewsHint')}</p>
         </div>
         <div>
-          <label htmlFor="rating" className="label">Rating</label>
+          <label htmlFor="rating" className="label">{t('admin.ratingFilter')}</label>
           <select id="rating" className="input" value={rating} onChange={(e) => setRating(e.target.value ? Number(e.target.value) : '')}>
-            <option value="">All</option>
-            {[5, 4, 3, 2, 1].map((r) => <option key={r} value={r}>{r} star{r === 1 ? '' : 's'}</option>)}
+            <option value="">{t('common.all')}</option>
+            {[5, 4, 3, 2, 1].map((r) => <option key={r} value={r}>{t('review.stars', { count: r })}</option>)}
           </select>
         </div>
       </div>
@@ -52,8 +54,10 @@ export default function FeedbackTab() {
           <div className="flex flex-wrap items-center gap-6">
             <div>
               <p className="text-3xl font-semibold">{summary.count ? summary.average : '—'}</p>
-              <p className="text-amber-600">{summary.count ? stars(summary.average) : 'no reviews yet'}</p>
-              <p className="text-xs text-stone-500">{summary.count} review{summary.count === 1 ? '' : 's'} · {summary.unanswered} without a reply</p>
+              <p className="text-amber-600">{summary.count ? stars(summary.average) : t('accounting.noReviews')}</p>
+              <p className="text-xs text-stone-500">
+                {t('admin.reviewCount', { count: summary.count })} · {t('admin.reviewsWithout', { count: summary.unanswered })}
+              </p>
             </div>
             <ul className="flex-1 space-y-1 text-sm">
               {[5, 4, 3, 2, 1].map((star) => {
@@ -79,35 +83,35 @@ export default function FeedbackTab() {
       )}
 
       <ul className="mt-4 space-y-3">
-        {(data?.feedback ?? []).length === 0 && <li className="card text-stone-500">No reviews for this filter.</li>}
+        {(data?.feedback ?? []).length === 0 && <li className="card text-stone-500">{t('admin.noReviews')}</li>}
         {(data?.feedback ?? []).map((f) => (
           <li key={f.id} className="card">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-amber-600" aria-label={`${f.rating} out of 5`}>{stars(f.rating)}</span>
+              <span className="text-amber-600" aria-label={t('review.stars', { count: f.rating })}>{stars(f.rating)}</span>
               <span className="text-sm text-stone-500">
-                Order #{f.orderId} · {f.customerName} · {formatDateTime(f.createdAt)}
+                {t('checkout.orderNumber', { id: f.orderId })} · {f.customerName} · {formatDateTime(f.createdAt, lang)}
               </span>
             </div>
             {f.comment && <p className="mt-2 italic text-stone-700">“{f.comment}”</p>}
 
             {f.reply ? (
               <p className="mt-2 border-l-2 border-emerald-400 pl-3 text-sm text-stone-700">
-                <strong>Replied</strong>
-                {f.repliedByName && <> by {f.repliedByName}</>}
-                {f.repliedAt && <> on {formatDateTime(f.repliedAt)}</>}: {f.reply}
+                <strong>{t('admin.replied')}</strong>
+                {f.repliedByName && <>{t('admin.repliedBy', { name: f.repliedByName })}</>}
+                {f.repliedAt && <>{t('admin.repliedOn', { date: formatDateTime(f.repliedAt, lang) })}</>}: {f.reply}
               </p>
             ) : openId === f.id ? (
               <form onSubmit={send} className="mt-3">
-                <label htmlFor={`reply-${f.id}`} className="label">Your reply</label>
+                <label htmlFor={`reply-${f.id}`} className="label">{t('admin.yourReply')}</label>
                 <textarea id={`reply-${f.id}`} rows={2} maxLength={500} required className="input" value={text}
                   onChange={(e) => setText(e.target.value)} />
                 <div className="mt-2 flex gap-2">
-                  <button className="btn-primary" disabled={reply.isLoading}>{reply.isLoading ? 'Sending…' : 'Send reply'}</button>
-                  <button type="button" className="btn-secondary" onClick={() => { setOpenId(null); setText(''); }}>Cancel</button>
+                  <button className="btn-primary" disabled={reply.isLoading}>{reply.isLoading ? t('review.sending') : t('admin.sendReply')}</button>
+                  <button type="button" className="btn-secondary" onClick={() => { setOpenId(null); setText(''); }}>{t('common.cancel')}</button>
                 </div>
               </form>
             ) : (
-              <button className="btn-secondary mt-3" onClick={() => { setOpenId(f.id); setText(''); }}>Reply</button>
+              <button className="btn-secondary mt-3" onClick={() => { setOpenId(f.id); setText(''); }}>{t('admin.reply')}</button>
             )}
           </li>
         ))}

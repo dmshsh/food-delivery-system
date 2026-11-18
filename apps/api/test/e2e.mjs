@@ -27,6 +27,19 @@ function client() {
   };
 }
 
+/**
+ * A phone number no other account holds.
+ *
+ * One number belongs to one customer, so a suite that registered every account
+ * with the same number would fail on its second run. The counter keeps them
+ * apart within a run; the timestamp keeps runs apart from each other.
+ */
+let phoneCounter = 0;
+function uniquePhone() {
+  const unique = String(Date.now()).slice(-7) + String(phoneCounter++).padStart(2, '0');
+  return `+7 ${unique.slice(0, 3)} ${unique.slice(3, 6)} ${unique.slice(6)}`;
+}
+
 let passed = 0;
 async function check(name, fn) {
   try {
@@ -179,12 +192,16 @@ await check('registration creates a customer only and signs in', async () => {
   const c = client();
   const email = `e2e-${Date.now()}@example.test`;
   const r = await c('POST', '/auth/register', {
-    fullName: 'E2E User', email, phone: '+7 700 111 22 33', address: 'Almaty', password: 'longenough1', role: 'KITCHEN',
+    fullName: 'E2E User', email, phone: uniquePhone(), address: 'Almaty', password: 'longenough1', role: 'KITCHEN',
   });
   assert.equal(r.status, 201, JSON.stringify(r.data));
   assert.equal(r.data.user.role, 'CUSTOMER'); // a "role" field in the request is ignored
   assert.equal((await c('GET', '/auth/me')).data.user.email, email);
-  assert.equal((await client()('POST', '/auth/register', { fullName: 'X', email, phone: '+7 700 111 22 33', address: 'A', password: 'longenough1' })).status, 409);
+  assert.equal(
+    (await client()('POST', '/auth/register', { fullName: 'X', email, phone: uniquePhone(), address: 'A', password: 'longenough1' })).status,
+    409,
+    'the same email was accepted twice',
+  );
 });
 
 console.log(process.exitCode ? '\nSome checks FAILED.' : `\nAll ${passed} checks passed.`);

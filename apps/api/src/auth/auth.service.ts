@@ -10,7 +10,8 @@ import * as bcrypt from 'bcryptjs';
 import { DbService } from '../db/db.service';
 import { BLOCK_MINUTES, WARN_FROM_ATTEMPT, blockSecondsLeft, describeWait } from '../domain/security';
 import { ValidationError, validateRegistration } from '../domain/validation';
-import { SecurityService } from '../security/security.service';
+import { IpGuardService, SecurityService } from '../security/security.service';
+import { UniquenessService } from '../uniqueness/uniqueness.service';
 import { AuthUser, Role } from './types';
 
 @Injectable()
@@ -19,6 +20,8 @@ export class AuthService {
     private readonly db: DbService,
     private readonly jwt: JwtService,
     private readonly security: SecurityService,
+    private readonly ipGuard: IpGuardService,
+    private readonly unique: UniquenessService,
   ) {}
 
   /** Registration always creates a CUSTOMER. Staff accounts exist only in the database seed. */
@@ -30,12 +33,18 @@ export class AuthService {
       if (e instanceof ValidationError) throw new BadRequestException({ code: e.code, message: e.message });
       throw e;
     }
+    // Asked before the insert so the person is told which field clashes; the
+    // unique indexes behind them are what actually guarantees it.
+    await this.unique.assertEmailFree(input.email);
+    await this.unique.assertPhoneFree(input.phone);
+
     const hash = await bcrypt.hash(input.password, 10);
-    try {
-      const id = await this.db.tx(async (client) => {
+    const id = await this.unique.guard(() =>
+      this.db.tx(async (client) => {
         const u = await client.query(
-          `INSERT INTO users(email, password_hash, full_name, role) VALUES ($1,$2,$3,'CUSTOMER') RETURNING id`,
-          [input.email, hash, input.fullName],
+          `INSERT INTO users(email, password_hash, full_name, role, preferred_language)
+           VALUES ($1,$2,$3,'CUSTOMER',$4) RETURNING id`,
+          [input.email, hash, input.fullName, input.language],
         );
         await client.query('INSERT INTO customers(user_id, phone, address) VALUES ($1,$2,$3)', [
           u.rows[0].id,
@@ -43,19 +52,17 @@ export class AuthService {
           input.address,
         ]);
         return u.rows[0].id as number;
-      });
-      const user: AuthUser = { id, email: input.email, fullName: input.fullName, role: 'CUSTOMER' };
-      await this.security.log({ kind: 'REGISTERED', userId: id, email: input.email, ip });
-      return { user, token: await this.sign(user) };
-    } catch (e) {
-      if ((e as { code?: string }).code === '23505') {
-        throw new ConflictException({
-          code: 'email_taken',
-          message: 'This email is already registered. Please sign in.',
-        });
-      }
-      throw e;
-    }
+      }),
+    );
+    const user: AuthUser = {
+      id,
+      email: input.email,
+      fullName: input.fullName,
+      role: 'CUSTOMER',
+      language: input.language,
+    };
+    await this.security.log({ kind: 'REGISTERED', userId: id, email: input.email, ip, detail: `language ${input.language}` });
+    return { user, token: await this.sign(user) };
   }
 
   /**
@@ -78,8 +85,31 @@ export class AuthService {
 
     const now = new Date();
     const address = email.trim();
+
+    // 0. Is the machine itself blocked? This comes before everything, including
+    // before the email is looked up: someone working through a list of accounts
+    // should not even learn which of them exist.
+    const ipBlock = await this.ipGuard.blockFor(ip);
+    if (ipBlock) {
+      await this.security.log({
+        kind: 'BLOCKED_LOGIN_ATTEMPT',
+        email: address,
+        ip,
+        detail: `sign-in refused: this address is blocked (${ipBlock.reason || 'no reason given'})`,
+      });
+      throw new ForbiddenException({
+        code: 'ip_blocked',
+        message: ipBlock.manual
+          ? 'Sign-in from this network has been blocked by an administrator.'
+          : `Too many failed sign-ins from this network. Try again in ${describeWait(
+              blockSecondsLeft(ipBlock.blocked_until, now),
+            )}.`,
+      });
+    }
+
     const { rows } = await this.db.pool.query(
-      `SELECT id, email, full_name, role, password_hash, blocked_until, is_active, block_reason
+      `SELECT id, email, full_name, role, password_hash, blocked_until, is_active, block_reason,
+              preferred_language
        FROM users WHERE lower(email) = lower($1)`,
       [address],
     );
@@ -120,6 +150,16 @@ export class AuthService {
     // 3. Only now is the password compared.
     if (!row || !(await bcrypt.compare(password, row.password_hash))) {
       const result = await this.security.registerFailure(address, ip, row?.id ?? null, now);
+      // The same failure counts twice: once against the account it named, and
+      // once against the machine it came from. The two limits catch different
+      // attacks — one person's password, or a sweep across many accounts.
+      const fromIp = await this.ipGuard.registerFailure(ip, now);
+      if (fromIp.blocked) {
+        throw new ForbiddenException({
+          code: 'ip_blocked',
+          message: 'Too many failed sign-ins from this network. Sign-in from here is blocked for an hour.',
+        });
+      }
       if (result.blocked && row) {
         throw new ForbiddenException({
           code: 'account_blocked',
@@ -134,7 +174,13 @@ export class AuthService {
     }
 
     await this.security.registerSuccess(row.id, row.email, ip);
-    const user: AuthUser = { id: row.id, email: row.email, fullName: row.full_name, role: row.role as Role };
+    const user: AuthUser = {
+      id: row.id,
+      email: row.email,
+      fullName: row.full_name,
+      role: row.role as Role,
+      language: row.preferred_language,
+    };
     return { user, token: await this.sign(user) };
   }
 
@@ -147,7 +193,27 @@ export class AuthService {
     return rows[0] ?? null;
   }
 
-  private sign(user: AuthUser) {
-    return this.jwt.signAsync({ sub: user.id, role: user.role });
+  /**
+   * A fresh token for a session that must survive a password change.
+   *
+   * Changing a password refuses every token issued before it, which is what
+   * signs the other devices out. The browser doing the changing would sign
+   * itself out too, which is not what anyone means by "change my password", so
+   * it is handed a new token at the same moment.
+   */
+  reissue(user: AuthUser): Promise<string> {
+    return this.sign(user);
+  }
+
+  /**
+   * Signs a token stamped with the account's current session generation.
+   *
+   * Read from the database each time rather than passed in, so there is one
+   * place that decides which generation a new token belongs to, and no caller
+   * can accidentally hand out a token from the previous one.
+   */
+  private async sign(user: AuthUser) {
+    const { rows } = await this.db.pool.query('SELECT token_version FROM users WHERE id = $1', [user.id]);
+    return this.jwt.signAsync({ sub: user.id, role: user.role, ver: Number(rows[0]?.token_version ?? 1) });
   }
 }
