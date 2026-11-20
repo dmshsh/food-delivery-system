@@ -49,7 +49,7 @@ export default function LanguageSwitch({ className = '' }: { className?: string 
     <label className={`flex items-center gap-1 ${className}`}>
       <span className="sr-only">{t('common.language')}</span>
       <select
-        className="rounded-md border border-stone-300 bg-white px-2 py-1 text-sm text-stone-700 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+        className="h-9 rounded-lg border border-stone-300 bg-white px-2 text-sm text-stone-700 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
         value={lang}
         onChange={(e) => choose(e.target.value as Language)}
         aria-label={t('common.language')}

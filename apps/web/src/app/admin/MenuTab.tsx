@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
 import { formatKzt, translateError } from '@/lib/format';
 import { readDragPayload, reorder, setDragPayload } from '@/lib/dnd';
@@ -17,6 +18,7 @@ const EMPTY: MenuItemBody = { name: '', description: '', category: 'Meals', pric
 
 export default function MenuTab() {
   const { t, lang } = useI18n();
+  const c = useContent();
   const { data, isLoading, error } = useAdminMenuQuery();
   const [reorderMenu, { isLoading: saving }] = useReorderMenuMutation();
   const [removeDish] = useRemoveDishMutation();
@@ -126,14 +128,14 @@ export default function MenuTab() {
 
             <div className="min-w-[12rem] flex-1">
               <p className="font-medium">
-                {item.name}
+                {c.dish(item.name)}
                 {!item.available && (
                   <span className="ml-2 rounded bg-stone-200 px-2 py-0.5 text-xs">{t('accounting.hidden')}</span>
                 )}
               </p>
-              <p className="text-sm text-stone-600">{item.description}</p>
+              <p className="text-sm text-stone-600">{c.description(item.name, item.description)}</p>
               <p className="text-xs text-stone-500">
-                {item.category} · {t('admin.dishOrdered', { count: item.timesOrdered })}
+                {c.category(item.category)} · {t('admin.dishOrdered', { count: item.timesOrdered })}
               </p>
             </div>
 

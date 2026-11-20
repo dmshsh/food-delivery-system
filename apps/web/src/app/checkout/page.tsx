@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import RequireRole from '@/components/RequireRole';
 import StatusBadge from '@/components/StatusBadge';
 import { useSession } from '@/components/useSession';
+import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
 import { errorCode, formatKzt, formatPoints, isNetworkError, translateError } from '@/lib/format';
 import type { CheckoutOutcome, Order } from '@/lib/types';
@@ -50,6 +51,7 @@ function Checkout() {
   const cart = useAppSelector((s) => s.cart);
   const { profile } = useSession();
   const { t, lang } = useI18n();
+  const c = useContent();
   const menu = useMenuQuery();
   const bonus = useBonusQuery();
   const [createOrder, create] = useCreateOrderMutation();
@@ -206,7 +208,7 @@ function Checkout() {
           <ul className="mt-3 divide-y divide-stone-100 text-sm">
             {order.items.map((i) => (
               <li key={i.itemId} className="flex justify-between gap-3 py-1.5">
-                <span>{i.quantity} × {i.name}</span>
+                <span>{i.quantity} × {c.dish(i.name)}</span>
                 <span className="whitespace-nowrap">{formatKzt((i.unitPriceTiyn ?? 0) * i.quantity, lang)}</span>
               </li>
             ))}
@@ -293,7 +295,7 @@ function Checkout() {
         <ul className="mt-2 divide-y divide-stone-100">
           {lines.map(({ item, quantity }) => (
             <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm">
-              <span className="min-w-[8rem] flex-1">{item.name}</span>
+              <span className="min-w-[8rem] flex-1">{c.dish(item.name)}</span>
               <div className="flex items-center gap-2">
                 <button
                   className="btn-secondary px-3 py-1"

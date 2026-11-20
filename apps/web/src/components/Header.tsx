@@ -56,95 +56,120 @@ export default function Header() {
   }
 
   const linkClass = (href: string) =>
-    `rounded-md px-3 py-2 ${
-      pathname === href ? 'bg-emerald-50 font-medium text-emerald-900' : 'text-stone-700 hover:bg-stone-100'
+    `inline-flex h-9 items-center whitespace-nowrap rounded-lg px-3 text-sm transition-colors ${
+      pathname === href
+        ? 'bg-emerald-50 font-medium text-emerald-900'
+        : 'text-stone-700 hover:bg-stone-100 hover:text-stone-900'
     }`;
 
+  const roleLabel = user ? t(roleKey(user.role) as MessageKey) : '';
+
   return (
-    <header className="border-b border-stone-200 bg-white">
-      <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
-        <Link href="/" className="text-lg font-semibold text-emerald-800">
+    <header className="sticky top-0 z-30 border-b border-stone-200 bg-white/95 backdrop-blur">
+      <div className="mx-auto flex h-16 max-w-6xl items-center gap-4 px-4">
+        <Link href="/" className="shrink-0 whitespace-nowrap text-lg font-semibold text-emerald-800">
           {t('nav.title')}
         </Link>
 
-        {/* Wide screens: the links sit in the bar. */}
-        <nav className="hidden flex-wrap gap-1 text-sm md:flex" aria-label="Main">
+        {/* Wide screens: the links sit in the bar, on one line. */}
+        <nav className="hidden min-w-0 items-center gap-1 lg:flex" aria-label={t('nav.main')}>
           {links.map((l) => (
-            <Link key={l.href} href={l.href} className={linkClass(l.href)}>
+            <Link
+              key={l.href}
+              href={l.href}
+              className={linkClass(l.href)}
+              aria-current={pathname === l.href ? 'page' : undefined}
+            >
               {l.label}
             </Link>
           ))}
         </nav>
 
-        <div className="ml-auto flex items-center gap-2 text-sm">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {user && profile && (
             <Link
               href="/bonus"
-              className="hidden rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200 sm:inline-block"
+              className="hidden h-9 items-center whitespace-nowrap rounded-full bg-amber-100 px-3 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-200 sm:inline-flex"
               title={t('nav.bonus')}
             >
-              {profile.bonusPoints} pts
+              {t('nav.pointsBadge', { count: profile.bonusPoints })}
             </Link>
           )}
           <LanguageSwitch className="hidden sm:flex" />
           {user ? (
             <>
-              <span className="hidden text-stone-600 lg:inline">
-                {user.fullName} · {t(roleKey(user.role) as MessageKey)}
-              </span>
-              <button onClick={signOut} className="btn-secondary hidden md:inline-flex">
+              <div className="hidden max-w-[11rem] flex-col leading-tight xl:flex" title={`${user.fullName} · ${roleLabel}`}>
+                <span className="truncate text-sm font-medium text-stone-800">{user.fullName}</span>
+                <span className="truncate text-xs text-stone-500">{roleLabel}</span>
+              </div>
+              <button type="button" onClick={signOut} className="btn-secondary hidden h-9 whitespace-nowrap py-0 lg:inline-flex">
                 {t('nav.signOut')}
               </button>
             </>
           ) : (
             <>
-              <Link href="/login" className="btn-secondary hidden md:inline-flex">
+              <Link href="/login" className="btn-secondary hidden h-9 whitespace-nowrap py-0 lg:inline-flex">
                 {t('nav.signIn')}
               </Link>
-              <Link href="/register" className="btn-primary hidden md:inline-flex">
+              <Link href="/register" className="btn-primary hidden h-9 whitespace-nowrap py-0 lg:inline-flex">
                 {t('nav.register')}
               </Link>
             </>
           )}
 
-          {/* Narrow screens: one button that opens the same list. */}
+          {/* Narrower screens: one button that opens the same list. */}
           <button
             type="button"
-            className="btn-secondary px-3 md:hidden"
+            className="btn-secondary h-9 w-9 p-0 lg:hidden"
             aria-expanded={open}
             aria-controls="mobile-nav"
             aria-label={open ? t('nav.closeMenu') : t('nav.openMenu')}
             onClick={() => setOpen((v) => !v)}
           >
-            <span aria-hidden="true" className="text-lg leading-none">{open ? '✕' : '☰'}</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              {open ? <path d="M6 6l12 12M18 6L6 18" /> : <path d="M4 7h16M4 12h16M4 17h16" />}
+            </svg>
           </button>
         </div>
       </div>
 
       {open && (
-        <nav id="mobile-nav" className="border-t border-stone-200 bg-white px-4 py-3 md:hidden" aria-label="Main">
-          <div className="flex flex-col gap-1 text-sm">
+        <nav id="mobile-nav" className="border-t border-stone-200 bg-white px-4 py-3 lg:hidden" aria-label={t('nav.main')}>
+          <div className="mx-auto flex max-w-6xl flex-col gap-1">
             {links.map((l) => (
-              <Link key={l.href} href={l.href} className={linkClass(l.href)}>
+              <Link
+                key={l.href}
+                href={l.href}
+                className={linkClass(l.href)}
+                aria-current={pathname === l.href ? 'page' : undefined}
+              >
                 {l.label}
               </Link>
             ))}
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-stone-100 pt-3">
-            <LanguageSwitch />
+          <div className="mx-auto mt-3 flex max-w-6xl flex-wrap items-center gap-3 border-t border-stone-100 pt-3">
+            {user && profile && (
+              <Link
+                href="/bonus"
+                className="inline-flex h-9 items-center rounded-full bg-amber-100 px-3 text-xs font-medium text-amber-900 sm:hidden"
+              >
+                {t('nav.pointsBadge', { count: profile.bonusPoints })}
+              </Link>
+            )}
+            <LanguageSwitch className="sm:hidden" />
             {user ? (
               <>
                 <span className="text-sm text-stone-600">
-                  {user.fullName} · {t(roleKey(user.role) as MessageKey)}
+                  {user.fullName} · {roleLabel}
                 </span>
-                <button onClick={signOut} className="btn-secondary ml-auto">
+                <button type="button" onClick={signOut} className="btn-secondary ml-auto h-9 py-0">
                   {t('nav.signOut')}
                 </button>
               </>
             ) : (
               <div className="ml-auto flex gap-2">
-                <Link href="/login" className="btn-secondary">{t('nav.signIn')}</Link>
-                <Link href="/register" className="btn-primary">{t('nav.register')}</Link>
+                <Link href="/login" className="btn-secondary h-9 py-0">{t('nav.signIn')}</Link>
+                <Link href="/register" className="btn-primary h-9 py-0">{t('nav.register')}</Link>
               </div>
             )}
           </div>

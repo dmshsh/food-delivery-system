@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import RequireRole from '@/components/RequireRole';
 import StatusBadge from '@/components/StatusBadge';
+import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dictionaries';
 import { formatDateTime, translateError } from '@/lib/format';
@@ -34,6 +35,7 @@ export default function KitchenPage() {
 
 function Kitchen() {
   const { t, lang } = useI18n();
+  const c = useContent();
   const { data, isLoading, error } = useOrdersQuery(undefined, { pollingInterval: 5000 });
   const [setStatus, { isLoading: saving }] = useSetStatusMutation();
   const [message, setMessage] = useState('');
@@ -143,7 +145,7 @@ function Kitchen() {
                     <ul className="mt-2 text-sm">
                       {o.items.map((i) => (
                         <li key={i.itemId}>
-                          <strong>{i.quantity}</strong> × {i.name}
+                          <strong>{i.quantity}</strong> × {c.dish(i.name)}
                         </li>
                       ))}
                     </ul>

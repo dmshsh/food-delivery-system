@@ -28,7 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <I18nProvider>
           <StoreProvider>
             <Header />
-            <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6">{children}</main>
+            <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">{children}</main>
             <Footer />
           </StoreProvider>
         </I18nProvider>

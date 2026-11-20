@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import FeedbackForm from '@/components/FeedbackForm';
 import RequireRole from '@/components/RequireRole';
 import StatusBadge from '@/components/StatusBadge';
+import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
 import {
   ALL_STATUSES,
@@ -131,6 +132,7 @@ function MyOrders() {
 
 function OrderCard({ order: o, lang }: { order: Order; lang: string }) {
   const { t } = useI18n();
+  const c = useContent();
 
   return (
     <li className="card">
@@ -146,7 +148,7 @@ function OrderCard({ order: o, lang }: { order: Order; lang: string }) {
       <ul className="mt-2 text-sm">
         {o.items.map((i) => (
           <li key={i.itemId}>
-            {i.quantity} × {i.name}
+            {i.quantity} × {c.dish(i.name)}
           </li>
         ))}
       </ul>
@@ -185,6 +187,7 @@ function OrderCard({ order: o, lang }: { order: Order; lang: string }) {
  */
 function RepeatOrderButton({ orderId, lang }: { orderId: number; lang: string }) {
   const { t } = useI18n();
+  const c = useContent();
   const router = useRouter();
   const dispatch = useAppDispatch();
   const [ask, { data, isFetching, error }] = useLazyRepeatOrderQuery();
@@ -226,7 +229,7 @@ function RepeatOrderButton({ orderId, lang }: { orderId: number; lang: string })
             <p className="text-stone-700">{t('orders.repeatNow', { total: formatKzt(data.totalTiyn, lang) })}</p>
           )}
           {data.unavailable.length > 0 && (
-            <p className="mt-1 text-amber-800">{t('orders.repeatUnavailable', { names: data.unavailable.join(', ') })}</p>
+            <p className="mt-1 text-amber-800">{t('orders.repeatUnavailable', { names: data.unavailable.map(c.dish).join(', ') })}</p>
           )}
           {data.repricedCount > 0 && (
             <p className="text-amber-800">{t('orders.repeatRepriced', { count: data.repricedCount })}</p>

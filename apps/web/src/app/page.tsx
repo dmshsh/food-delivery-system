@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
 import { formatKzt } from '@/lib/format';
 import { MAX_QUANTITY, setQuantity } from '@/store/cartSlice';
@@ -13,6 +14,7 @@ export default function MenuPage() {
   const quantities = useAppSelector((s) => s.cart.quantities);
   const dispatch = useAppDispatch();
   const { t, lang } = useI18n();
+  const c = useContent();
   const [category, setCategory] = useState('All');
 
   const items = data?.items ?? [];
@@ -27,15 +29,15 @@ export default function MenuPage() {
       <p className="mt-1 text-stone-600">{t('menu.subtitle')}</p>
 
       <div className="mt-5 flex flex-wrap gap-2" role="tablist" aria-label={t('menu.categories')}>
-        {categories.map((c) => (
+        {categories.map((cat) => (
           <button
-            key={c}
+            key={cat}
             role="tab"
-            aria-selected={c === category}
-            onClick={() => setCategory(c)}
-            className={c === category ? 'btn-primary' : 'btn-secondary'}
+            aria-selected={cat === category}
+            onClick={() => setCategory(cat)}
+            className={cat === category ? 'btn-primary' : 'btn-secondary'}
           >
-            {c === 'All' ? t('common.all') : c}
+            {cat === 'All' ? t('common.all') : c.category(cat)}
           </button>
         ))}
       </div>
@@ -57,10 +59,10 @@ export default function MenuPage() {
             <li key={item.id} className="card flex flex-col justify-between gap-3">
               <div>
                 <div className="flex items-baseline justify-between gap-3">
-                  <h2 className="font-medium">{item.name}</h2>
+                  <h2 className="font-medium">{c.dish(item.name)}</h2>
                   <span className="whitespace-nowrap font-medium text-emerald-800">{formatKzt(item.priceTiyn, lang)}</span>
                 </div>
-                <p className="mt-1 text-sm text-stone-600">{item.description}</p>
+                <p className="mt-1 text-sm text-stone-600">{c.description(item.name, item.description)}</p>
               </div>
               {qty === 0 ? (
                 <button
@@ -73,7 +75,7 @@ export default function MenuPage() {
                 <div className="flex items-center gap-3 self-start">
                   <button
                     className="btn-secondary"
-                    aria-label={t('menu.removeOne', { name: item.name })}
+                    aria-label={t('menu.removeOne', { name: c.dish(item.name) })}
                     onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: qty - 1 }))}
                   >
                     −
@@ -81,7 +83,7 @@ export default function MenuPage() {
                   <span className="w-6 text-center" aria-live="polite">{qty}</span>
                   <button
                     className="btn-secondary"
-                    aria-label={t('menu.addOne', { name: item.name })}
+                    aria-label={t('menu.addOne', { name: c.dish(item.name) })}
                     disabled={qty >= MAX_QUANTITY}
                     onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: qty + 1 }))}
                   >

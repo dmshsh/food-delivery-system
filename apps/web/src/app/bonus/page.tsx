@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import RequireRole from '@/components/RequireRole';
+import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
 import { formatDateTime, formatKzt, formatPoints, translateError } from '@/lib/format';
 import { useBonusQuery } from '@/store/api';
@@ -16,6 +17,7 @@ export default function BonusPage() {
 
 function Bonus() {
   const { t, lang } = useI18n();
+  const c = useContent();
   const { data, isLoading, error } = useBonusQuery();
 
   return (
@@ -72,7 +74,7 @@ function Bonus() {
                       </span>
                     </div>
                     <p className="mt-1">
-                      {row.note} {row.orderId && <span className="text-stone-500">{t('bonus.forOrder', { id: row.orderId })}</span>}
+                      {c.note(row.note)} {row.orderId && <span className="text-stone-500">{t('bonus.forOrder', { id: row.orderId })}</span>}
                     </p>
                     <p className="text-xs text-stone-500">
                       {t('bonus.balanceAfter')}: {row.balanceAfter}
@@ -96,7 +98,7 @@ function Bonus() {
                       <tr key={row.id} className="border-t border-stone-100">
                         <td className="whitespace-nowrap px-4 py-2">{formatDateTime(row.createdAt, lang)}</td>
                         <td className="px-4 py-2">
-                          {row.note}
+                          {c.note(row.note)}
                           {row.orderId && <span className="ml-1 text-stone-500">{t('bonus.forOrder', { id: row.orderId })}</span>}
                         </td>
                         <td className={`px-4 py-2 text-right font-medium ${row.points > 0 ? 'text-emerald-800' : 'text-amber-800'}`}>

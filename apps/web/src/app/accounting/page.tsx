@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import RequireRole from '@/components/RequireRole';
 import StatusBadge from '@/components/StatusBadge';
+import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dictionaries';
 import { ALL_STATUSES, formatDate, formatDateTime, formatKzt, stars, statusKey, translateError } from '@/lib/format';
@@ -295,6 +296,7 @@ function DailyReport() {
 
 function DishReport() {
   const { t, lang } = useI18n();
+  const c = useContent();
   const [range, setRange] = useState({ from: '', to: '' });
   const { data, isLoading, error } = useDishReportQuery(range);
 
@@ -325,7 +327,7 @@ function DishReport() {
 
           {data.summary.neverOrdered.length > 0 && (
             <p className="mt-2 text-xs text-stone-500">
-              {t('accounting.neverOrdered', { names: data.summary.neverOrdered.join(', ') })}
+              {t('accounting.neverOrdered', { names: data.summary.neverOrdered.map(c.dish).join(', ') })}
             </p>
           )}
 
@@ -345,11 +347,11 @@ function DishReport() {
                 {data.dishes.map((d) => (
                   <tr key={d.id} className="border-t border-stone-100">
                     <td className="px-4 py-2">
-                      {d.name}
+                      {c.dish(d.name)}
                       {!d.available && (
                         <span className="ml-2 rounded bg-stone-200 px-2 py-0.5 text-xs">{t('accounting.hidden')}</span>
                       )}
-                      <div className="text-xs text-stone-500">{d.category}</div>
+                      <div className="text-xs text-stone-500">{c.category(d.category)}</div>
                     </td>
                     <td className="px-4 py-2 text-right">{d.quantity}</td>
                     <td className="px-4 py-2 text-right">{d.orders}</td>

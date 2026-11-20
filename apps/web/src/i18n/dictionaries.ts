@@ -59,6 +59,8 @@ const en = {
   'nav.register': 'Register',
   'nav.openMenu': 'Open the menu',
   'nav.closeMenu': 'Close the menu',
+  'nav.pointsBadge': '{count} pts',
+  'nav.main': 'Main navigation',
   'nav.title': 'Food Delivery',
   'footer.note': 'Coursework prototype. Synthetic data, simulated payments: no real money moves.',
 
@@ -508,6 +510,8 @@ const ru: Dictionary = {
   'nav.register': 'Регистрация',
   'nav.openMenu': 'Открыть меню',
   'nav.closeMenu': 'Закрыть меню',
+  'nav.pointsBadge': '{count} б.',
+  'nav.main': 'Основная навигация',
   'nav.title': 'Доставка еды',
   'footer.note': 'Учебный прототип. Данные синтетические, оплата симулируется: настоящие деньги не двигаются.',
 
@@ -932,6 +936,8 @@ const kk: Dictionary = {
   'nav.register': 'Тіркелу',
   'nav.openMenu': 'Мәзірді ашу',
   'nav.closeMenu': 'Мәзірді жабу',
+  'nav.pointsBadge': '{count} ұпай',
+  'nav.main': 'Негізгі навигация',
   'nav.title': 'Тамақ жеткізу',
   'footer.note': 'Оқу прототипі. Деректер жасанды, төлем имитацияланады: нақты ақша қозғалмайды.',
 
