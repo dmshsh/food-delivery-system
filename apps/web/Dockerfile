@@ -8,6 +8,10 @@ COPY apps/web/package.json apps/web/
 RUN npm ci --workspace apps/web --include-workspace-root
 
 COPY apps/web apps/web
+# Next.js evaluates rewrites() during `next build` and bakes the destination into
+# .next/routes-manifest.json, so the API address must be known here, not only at runtime.
+ARG API_URL=http://api:3001
+ENV API_URL=$API_URL
 RUN npm run build --workspace apps/web
 
 # ---------------------------------------------------------------- runtime
