@@ -42,21 +42,65 @@ export async function seedDemoData(pool: Pool): Promise<boolean> {
       );
       customers[email] = r.rows[0].id;
     }
+    // Nutrition travels with each dish: a fresh database and one that has run
+    // migration 002 must end up describing the same menu. The figures are
+    // synthetic but plausible for one portion.
     const menu: Record<string, number> = {};
     let position = 0;
-    for (const [name, description, category, price] of [
-      ['Rice bowl', 'Warm rice, seasonal vegetables and a sesame dressing.', 'Meals', 180000],
-      ['Chicken wrap', 'Grilled chicken, crunchy greens and a soft tortilla.', 'Meals', 150000],
-      ['Vegetable soup', 'A light broth with potatoes, carrots and herbs.', 'Meals', 120000],
-      ['Lemon tea', 'Black tea with lemon. Served warm.', 'Drinks', 60000],
-      ['Apple juice', 'A 250 ml bottle of apple juice.', 'Drinks', 70000],
-      ['Oat cookie', 'A small oat cookie for the end of lunch.', 'Extras', 45000],
+    for (const dish of [
+      {
+        name: 'Rice bowl', category: 'Meals', price: 180000,
+        description: 'Warm rice, seasonal vegetables and a sesame dressing.',
+        kcal: 520, protein: 14, fat: 16, carbs: 78,
+        ingredients: 'rice, seasonal vegetables, sesame dressing, soy sauce',
+        tags: ['vegetarian', 'dairy-free'],
+      },
+      {
+        name: 'Chicken wrap', category: 'Meals', price: 150000,
+        description: 'Grilled chicken, crunchy greens and a soft tortilla.',
+        kcal: 610, protein: 32, fat: 24, carbs: 62,
+        ingredients: 'wheat tortilla, grilled chicken, lettuce, tomato, yoghurt sauce',
+        tags: ['halal'],
+      },
+      {
+        name: 'Vegetable soup', category: 'Meals', price: 120000,
+        description: 'A light broth with potatoes, carrots and herbs.',
+        kcal: 180, protein: 5, fat: 4, carbs: 30,
+        ingredients: 'potato, carrot, onion, herbs, vegetable broth',
+        tags: ['vegetarian', 'vegan', 'dairy-free', 'gluten-free'],
+      },
+      {
+        name: 'Lemon tea', category: 'Drinks', price: 60000,
+        description: 'Black tea with lemon. Served warm.',
+        kcal: 45, protein: 0, fat: 0, carbs: 11,
+        ingredients: 'black tea, lemon, sugar',
+        tags: ['vegetarian', 'vegan', 'dairy-free', 'gluten-free'],
+      },
+      {
+        name: 'Apple juice', category: 'Drinks', price: 70000,
+        description: 'A 250 ml bottle of apple juice.',
+        kcal: 115, protein: 0.5, fat: 0, carbs: 28,
+        ingredients: 'apple juice',
+        tags: ['vegetarian', 'vegan', 'dairy-free', 'gluten-free'],
+      },
+      {
+        name: 'Oat cookie', category: 'Extras', price: 45000,
+        description: 'A small oat cookie for the end of lunch.',
+        kcal: 160, protein: 3, fat: 7, carbs: 22,
+        ingredients: 'oats, butter, sugar, hazelnuts',
+        tags: ['vegetarian', 'contains-nuts'],
+      },
     ] as const) {
       const r = await client.query(
-        'INSERT INTO menu_items(name, description, category, price_tiyn, sort_order) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-        [name, description, category, price, position++],
+        `INSERT INTO menu_items(name, description, category, price_tiyn, sort_order,
+                                calories_kcal, protein_g, fat_g, carbs_g, ingredients, tags)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+        [
+          dish.name, dish.description, dish.category, dish.price, position++,
+          dish.kcal, dish.protein, dish.fat, dish.carbs, dish.ingredients, [...dish.tags],
+        ],
       );
-      menu[name] = r.rows[0].id;
+      menu[dish.name] = r.rows[0].id;
     }
 
     // One already confirmed sample order (2 rice bowls + 1 wrap = 5,100 KZT) so the kitchen and accounting views are not empty.
@@ -67,7 +111,7 @@ export async function seedDemoData(pool: Pool): Promise<boolean> {
       [customers['alice@example.test']],
     );
     const orderId = order.rows[0].id;
-    await client.query('INSERT INTO order_items VALUES ($1,$2,2,180000), ($1,$3,1,150000)', [
+    await client.query('INSERT INTO order_items(order_id, item_id, quantity, unit_price_tiyn) VALUES ($1,$2,2,180000), ($1,$3,1,150000)', [
       orderId,
       menu['Rice bowl'],
       menu['Chicken wrap'],
@@ -96,7 +140,7 @@ export async function seedDemoData(pool: Pool): Promise<boolean> {
       [customers['bob@example.test']],
     );
     const deliveredId = delivered.rows[0].id;
-    await client.query('INSERT INTO order_items VALUES ($1,$2,1,120000), ($1,$3,1,60000)', [
+    await client.query('INSERT INTO order_items(order_id, item_id, quantity, unit_price_tiyn) VALUES ($1,$2,1,120000), ($1,$3,1,60000)', [
       deliveredId,
       menu['Vegetable soup'],
       menu['Lemon tea'],

@@ -139,6 +139,8 @@ export const MAX_BONUS_POINTS = 1_000_000;
 export interface OrderLine {
   itemId: number;
   quantity: number;
+  /** Who this line is for in a group order. Empty means the order as a whole. */
+  participant: string;
 }
 
 export interface OrderInput {
@@ -149,6 +151,8 @@ export interface OrderInput {
   notes: string;
   /** Bonus points the customer asked to spend on this order (0 = none). */
   bonusPoints: number;
+  /** The people sharing this order, in the order they were added. Empty = not a group order. */
+  participants: string[];
   /** Fingerprint of the order details: the same attempt must always carry the same details. */
   hash: string;
 }
@@ -182,6 +186,8 @@ export function validateOrderInput(data: unknown, now: Date): OrderInput {
     deliveryTime = requested;
   }
 
+  const participants = validateParticipants(data.participants);
+
   const items = data.items;
   if (!Array.isArray(items) || items.length === 0 || items.length > MAX_DISTINCT_ITEMS) {
     throw new ValidationError(`Add at least one dish. Maximum ${MAX_DISTINCT_ITEMS} different dishes.`);
@@ -195,11 +201,28 @@ export function validateOrderInput(data: unknown, now: Date): OrderInput {
     if (quantity < 1 || quantity > MAX_QUANTITY) {
       throw new ValidationError(`Choose a quantity between 1 and ${MAX_QUANTITY} for each dish.`);
     }
-    lines.push({ itemId: item.itemId as number, quantity });
+    const participant = item.participant === undefined || item.participant === null ? '' : item.participant;
+    if (typeof participant !== 'string' || participant.trim().length > MAX_PARTICIPANT_LENGTH) {
+      throw new ValidationError(`A name can have at most ${MAX_PARTICIPANT_LENGTH} characters.`, 'bad_participant');
+    }
+    const name = participant.trim();
+    // A line for somebody who is not in the order would never appear on the bill.
+    if (name && !participants.includes(name)) {
+      throw new ValidationError(`“${name}” is not one of the people in this order.`, 'unknown_participant');
+    }
+    lines.push({ itemId: item.itemId as number, quantity, participant: name });
   }
-  lines.sort((a, b) => a.itemId - b.itemId);
-  if (new Set(lines.map((l) => l.itemId)).size !== lines.length) {
+  // Sorted so the same order always produces the same fingerprint, whatever
+  // sequence the browser happened to send the lines in.
+  lines.sort((a, b) => a.itemId - b.itemId || a.participant.localeCompare(b.participant));
+  // The same dish twice for the same person is one line with a quantity; the
+  // same dish for two people is two lines, which is the point of a group order.
+  const keys = lines.map((l) => `${l.itemId}\u0000${l.participant}`);
+  if (new Set(keys).size !== keys.length) {
     throw new ValidationError('Combine repeated dishes into one quantity.');
+  }
+  if (participants.length > 0 && lines.every((l) => !l.participant)) {
+    throw new ValidationError('Give each dish to one of the people in the order.', 'unassigned_lines');
   }
 
   const rawBonus = data.bonusPoints ?? 0;
@@ -208,13 +231,32 @@ export function validateOrderInput(data: unknown, now: Date): OrderInput {
   }
   const bonusPoints = rawBonus as number;
 
-  // The fingerprint covers the bonus points too: spending points is part of the order
-  // details, so the same attempt ID can never come back with a different discount.
+  // The fingerprint covers the bonus points and the people too: both are part of
+  // the order details, so the same attempt ID can never come back with a
+  // different discount or a different bill split.
   const hash = createHash('sha256')
-    .update(JSON.stringify([lines, address.trim(), deliveryTime ? deliveryTime.toISOString() : 'ASAP', notes.trim(), bonusPoints]))
+    .update(
+      JSON.stringify([
+        lines,
+        address.trim(),
+        deliveryTime ? deliveryTime.toISOString() : 'ASAP',
+        notes.trim(),
+        bonusPoints,
+        participants,
+      ]),
+    )
     .digest('hex');
 
-  return { attemptId, lines, deliveryAddress: address.trim(), deliveryTime, notes: notes.trim(), bonusPoints, hash };
+  return {
+    attemptId,
+    lines,
+    deliveryAddress: address.trim(),
+    deliveryTime,
+    notes: notes.trim(),
+    bonusPoints,
+    participants,
+    hash,
+  };
 }
 
 // ---------- checkout outcome ----------
@@ -474,4 +516,250 @@ export function validateHistoryFilter(data: unknown, isStatus: (value: unknown) 
     throw new ValidationError('The start date must come before the end date.', 'bad_range');
   }
   return { status, search, from, to };
+}
+
+// ---------- group orders ----------
+
+export const MAX_PARTICIPANT_LENGTH = 40;
+export const MAX_PARTICIPANTS = 10;
+
+/**
+ * The people sharing an order.
+ *
+ * Names are compared without case, so "Alice" and "alice" cannot both appear on
+ * one bill — that would look like two people and split the total wrongly.
+ */
+export function validateParticipants(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new ValidationError('Send the people in the order as a list of names.', 'bad_participants');
+  }
+  const names: string[] = [];
+  for (const raw of value) {
+    if (typeof raw !== 'string') throw new ValidationError('Each name must be text.', 'bad_participants');
+    const name = raw.trim();
+    if (!name) continue; // an empty box in the form is simply nobody
+    if (name.length > MAX_PARTICIPANT_LENGTH) {
+      throw new ValidationError(`A name can have at most ${MAX_PARTICIPANT_LENGTH} characters.`, 'bad_participants');
+    }
+    if (names.some((existing) => existing.toLowerCase() === name.toLowerCase())) {
+      throw new ValidationError(`This order already has someone called ${name}.`, 'duplicate_participant');
+    }
+    names.push(name);
+  }
+  if (names.length === 1) {
+    throw new ValidationError('A group order needs at least two people.', 'bad_participants');
+  }
+  if (names.length > MAX_PARTICIPANTS) {
+    throw new ValidationError(`A group order can hold at most ${MAX_PARTICIPANTS} people.`, 'bad_participants');
+  }
+  return names;
+}
+
+// ---------- the dish search: calories, budget and what is in it ----------
+
+/** The labels a dish can carry. A fixed list, mirrored by a CHECK in the database. */
+export const DIET_TAGS = [
+  'vegetarian',
+  'vegan',
+  'spicy',
+  'contains-nuts',
+  'gluten-free',
+  'halal',
+  'dairy-free',
+] as const;
+export type DietTag = (typeof DIET_TAGS)[number];
+
+export function isDietTag(value: unknown): value is DietTag {
+  return typeof value === 'string' && (DIET_TAGS as readonly string[]).includes(value);
+}
+
+export interface DishFilter {
+  /** Matched against the name, the description and the ingredients. */
+  search: string | null;
+  maxCalories: number | null;
+  minCalories: number | null;
+  /** The budget, in tiyn, like every other amount in this system. */
+  maxPriceTiyn: number | null;
+  /** A dish must carry all of these. */
+  tags: DietTag[];
+  /** A dish must carry none of these — this is how "no nuts" is asked for. */
+  withoutTags: DietTag[];
+  sort: 'menu' | 'price' | 'calories';
+}
+
+/** Reads one number out of a query string, refusing anything that is not one. */
+function optionalNumber(value: unknown, field: string, max: number): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(String(value));
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > max) {
+    throw new ValidationError(`Enter a valid ${field}.`, 'bad_filter');
+  }
+  return Math.round(parsed);
+}
+
+function tagList(value: unknown, field: string): DietTag[] {
+  if (value === undefined || value === null || value === '') return [];
+  // A query string gives either one value or a repeated one, so both shapes arrive.
+  const raw = Array.isArray(value) ? value : String(value).split(',');
+  const tags: DietTag[] = [];
+  for (const entry of raw) {
+    const tag = String(entry).trim();
+    if (!tag) continue;
+    if (!isDietTag(tag)) throw new ValidationError(`There is no label called ${tag}.`, 'bad_tag');
+    if (!tags.includes(tag)) tags.push(tag);
+  }
+  if (tags.length > DIET_TAGS.length) throw new ValidationError(`Too many labels in ${field}.`, 'bad_tag');
+  return tags;
+}
+
+/**
+ * The filters on the dish search: what is in it, how much energy it carries,
+ * and what it costs.
+ */
+export function validateDishFilter(data: unknown): DishFilter {
+  const raw = isObject(data) ? data : {};
+
+  let search: string | null = null;
+  if (raw.search !== undefined && raw.search !== null && String(raw.search).trim() !== '') {
+    const value = String(raw.search).trim();
+    if (value.length > MAX_SEARCH_LENGTH) {
+      throw new ValidationError(`A search can have at most ${MAX_SEARCH_LENGTH} characters.`, 'search_too_long');
+    }
+    search = value;
+  }
+
+  const minCalories = optionalNumber(raw.minCalories, 'minimum calories', 5000);
+  const maxCalories = optionalNumber(raw.maxCalories, 'maximum calories', 5000);
+  if (minCalories !== null && maxCalories !== null && minCalories > maxCalories) {
+    throw new ValidationError('The lowest calories must be below the highest.', 'bad_range');
+  }
+
+  const maxPriceTiyn = optionalNumber(raw.maxPriceTiyn, 'budget', MAX_PRICE_TIYN);
+
+  const tags = tagList(raw.tags, 'tags');
+  const withoutTags = tagList(raw.withoutTags, 'withoutTags');
+  // "Must be vegan" and "must not be vegan" at once can never match anything,
+  // and is far more likely to be a mistake than a question.
+  const contradiction = tags.find((tag) => withoutTags.includes(tag));
+  if (contradiction) {
+    throw new ValidationError(`The label ${contradiction} is both required and excluded.`, 'contradictory_filter');
+  }
+
+  const sort = raw.sort === 'price' || raw.sort === 'calories' ? raw.sort : 'menu';
+  return { search, minCalories, maxCalories, maxPriceTiyn, tags, withoutTags, sort };
+}
+
+// ---------- delivery confirmation ----------
+
+/** The four digits the customer reads out at the door. */
+export function validateConfirmationCode(data: unknown): string {
+  const code = isObject(data) ? data.code : undefined;
+  const text = typeof code === 'number' ? String(code) : code;
+  if (typeof text !== 'string' || !/^[0-9]{4}$/.test(text.trim())) {
+    throw new ValidationError('Enter the four-digit code from the customer.', 'bad_confirmation_code');
+  }
+  return text.trim();
+}
+
+// ---------- the accounting chart ----------
+
+export const CHART_METRICS = ['revenue', 'orders', 'averageOrder', 'customers'] as const;
+export type ChartMetric = (typeof CHART_METRICS)[number];
+
+export const CHART_BUCKETS = ['day', 'week', 'month'] as const;
+export type ChartBucket = (typeof CHART_BUCKETS)[number];
+
+export interface ChartQuery {
+  metric: ChartMetric;
+  bucket: ChartBucket;
+  from: Date | null;
+  to: Date | null;
+}
+
+export function validateChartQuery(data: unknown): ChartQuery {
+  const raw = isObject(data) ? data : {};
+
+  const metric = raw.metric === undefined || raw.metric === '' ? 'revenue' : raw.metric;
+  if (!(CHART_METRICS as readonly unknown[]).includes(metric)) {
+    throw new ValidationError('Choose revenue, orders, average order or customers.', 'bad_metric');
+  }
+  const bucket = raw.bucket === undefined || raw.bucket === '' ? 'day' : raw.bucket;
+  if (!(CHART_BUCKETS as readonly unknown[]).includes(bucket)) {
+    throw new ValidationError('Group the chart by day, week or month.', 'bad_bucket');
+  }
+
+  const date = (value: unknown, field: string): Date | null => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = new Date(String(value));
+    if (Number.isNaN(parsed.getTime())) throw new ValidationError(`Enter a valid ${field} date.`, 'bad_date');
+    return parsed;
+  };
+  const from = date(raw.from, 'start');
+  const to = date(raw.to, 'end');
+  if (from && to && from > to) {
+    throw new ValidationError('The start date must come before the end date.', 'bad_range');
+  }
+  return { metric: metric as ChartMetric, bucket: bucket as ChartBucket, from, to };
+}
+
+// ---------- admin: nutrition on a dish ----------
+
+export interface NutritionInput {
+  caloriesKcal: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  ingredients: string;
+  tags: DietTag[];
+}
+
+/**
+ * The same rules, but for an update that may mention only some of the fields.
+ *
+ * The difference matters. On a new dish, a missing figure means "not measured",
+ * and null is the right answer. On an update, a missing figure means "I am not
+ * changing this" — and writing null would erase what somebody already measured
+ * because the form that sent the request did not happen to have the field on it.
+ *
+ * So this returns only the keys that were present, and the caller updates only
+ * those columns. An explicit null is still accepted: that is how a figure is
+ * deliberately cleared.
+ */
+export function validateNutritionPatch(data: unknown): Partial<NutritionInput> {
+  const raw = isObject(data) ? data : {};
+  const full = validateNutrition(raw);
+  const patch: Partial<NutritionInput> = {};
+  for (const key of ['caloriesKcal', 'proteinG', 'fatG', 'carbsG', 'ingredients', 'tags'] as const) {
+    if (key in raw) (patch as Record<string, unknown>)[key] = full[key];
+  }
+  return patch;
+}
+
+/** Nutrition is optional, but a figure that is given has to be a real one. */
+export function validateNutrition(data: unknown): NutritionInput {
+  const raw = isObject(data) ? data : {};
+
+  const amount = (value: unknown, field: string, max: number, whole: boolean): number | null => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = typeof value === 'number' ? value : Number(String(value));
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > max) {
+      throw new ValidationError(`Enter a valid amount of ${field}.`, 'bad_nutrition');
+    }
+    return whole ? Math.round(parsed) : Math.round(parsed * 10) / 10;
+  };
+
+  const ingredients = raw.ingredients ?? '';
+  if (typeof ingredients !== 'string' || ingredients.trim().length > 400) {
+    throw new ValidationError('List the ingredients in at most 400 characters.', 'bad_nutrition');
+  }
+
+  return {
+    caloriesKcal: amount(raw.caloriesKcal, 'calories', 5000, true),
+    proteinG: amount(raw.proteinG, 'protein', 500, false),
+    fatG: amount(raw.fatG, 'fat', 500, false),
+    carbsG: amount(raw.carbsG, 'carbohydrate', 500, false),
+    ingredients: ingredients.trim(),
+    tags: tagList(raw.tags, 'tags'),
+  };
 }

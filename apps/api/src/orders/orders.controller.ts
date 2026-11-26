@@ -56,6 +56,7 @@ export class OrdersController {
   @Patch(':id/status')
   @Roles('KITCHEN')
   changeStatus(@CurrentUser() user: AuthUser, @Param('id', ParseIntPipe) id: number, @Body() body: { status?: unknown }) {
-    return this.orders.changeStatus(user, id, body?.status);
+    // The whole body travels on: the last step also carries the delivery code.
+    return this.orders.changeStatus(user, id, body?.status, body);
   }
 }

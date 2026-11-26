@@ -3,7 +3,9 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
+import EmptyState from '@/components/EmptyState';
 import FeedbackForm from '@/components/FeedbackForm';
+import { SkeletonCards } from '@/components/Skeleton';
 import RequireRole from '@/components/RequireRole';
 import StatusBadge from '@/components/StatusBadge';
 import { useContent } from '@/i18n/content';
@@ -107,17 +109,22 @@ function MyOrders() {
         )}
       </section>
 
-      {isLoading && <p className="mt-4 text-stone-500">{t('common.loading')}</p>}
+      {isLoading && (
+        <div className="mt-4">
+          <SkeletonCards count={3} lines={4} />
+        </div>
+      )}
       {error != null && <p role="alert" className="mt-4 text-red-700">{translateError(error, t)}</p>}
       {data && orders.length === 0 && (
-        <div className="card mt-4">
-          {filtering ? (
-            t('orders.noMatches')
-          ) : (
-            <>
-              {t('orders.none')} <Link href="/" className="underline">{t('checkout.browseMenu')}</Link>
-            </>
-          )}
+        <div className="mt-4">
+          <EmptyState
+            kind={filtering ? 'noMatch' : 'empty'}
+            title={filtering ? t('orders.noMatches') : t('orders.none')}
+            description={filtering ? t('filters.noMatchHint') : undefined}
+            action={filtering ? undefined : { href: '/', label: t('checkout.browseMenu') }}
+            onAction={filtering ? () => setForm(EMPTY) : undefined}
+            actionLabel={filtering ? t('orders.clearFilters') : undefined}
+          />
         </div>
       )}
 
@@ -137,8 +144,17 @@ function OrderCard({ order: o, lang }: { order: Order; lang: string }) {
   return (
     <li className="card">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-medium">{t('checkout.orderNumber', { id: o.id })}</h2>
-        <StatusBadge status={o.status} />
+        <h2 className="font-medium">
+          <Link href={`/orders/${o.id}`} className="hover:underline">
+            {t('checkout.orderNumber', { id: o.id })}
+          </Link>
+        </h2>
+        <div className="flex items-center gap-2">
+          {o.isGroup && (
+            <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-700">{t('group.title')}</span>
+          )}
+          <StatusBadge status={o.status} />
+        </div>
       </div>
       <p className="mt-1 text-sm text-stone-600">
         {t('orders.placed', { date: formatDateTime(o.createdAt, lang) })} · {t('orders.deliverTo')}{' '}
@@ -172,6 +188,11 @@ function OrderCard({ order: o, lang }: { order: Order; lang: string }) {
         )}
       </div>
 
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Link href={`/orders/${o.id}`} className="btn-secondary">
+          {t('order.open')}
+        </Link>
+      </div>
       <RepeatOrderButton orderId={o.id} lang={lang} />
       <FeedbackForm order={o} />
     </li>

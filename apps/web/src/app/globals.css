@@ -2,12 +2,268 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * The two themes.
+ *
+ * Each colour is a role, not a shade. `--stone-50` is "the lightest surface" and
+ * `--stone-900` is "the strongest text"; in dark mode those swap ends, so a page
+ * written as `bg-stone-50 text-stone-900` reads correctly in both without a
+ * single `dark:` class. See tailwind.config.ts for how they are wired up.
+ *
+ * Values are bare `r g b` triples because Tailwind composes them with an alpha,
+ * which is what keeps `bg-emerald-50/40` working.
+ */
+:root {
+  --white: 255 255 255;
+
+  --stone-50: 250 250 249;
+  --stone-100: 245 245 244;
+  --stone-200: 231 229 228;
+  --stone-300: 214 211 209;
+  --stone-400: 168 162 158;
+  --stone-500: 120 113 108;
+  --stone-600: 87 83 78;
+  --stone-700: 68 64 60;
+  --stone-800: 41 37 36;
+  --stone-900: 28 25 23;
+
+  --emerald-50: 236 253 245;
+  --emerald-100: 209 250 229;
+  --emerald-200: 167 243 208;
+  --emerald-300: 110 231 183;
+  --emerald-400: 52 211 153;
+  --emerald-500: 16 185 129;
+  --emerald-600: 5 150 105;
+  --emerald-700: 4 120 87;
+  --emerald-800: 6 95 70;
+  --emerald-900: 6 78 59;
+
+  --amber-50: 255 251 235;
+  --amber-100: 254 243 199;
+  --amber-200: 253 230 138;
+  --amber-300: 252 211 77;
+  --amber-400: 251 191 36;
+  --amber-500: 245 158 11;
+  --amber-600: 217 119 6;
+  --amber-700: 180 83 9;
+  --amber-800: 146 64 14;
+  --amber-900: 120 53 15;
+
+  --red-50: 254 242 242;
+  --red-100: 254 226 226;
+  --red-200: 254 202 202;
+  --red-300: 252 165 165;
+  --red-400: 248 113 113;
+  --red-500: 239 68 68;
+  --red-600: 220 38 38;
+  --red-700: 185 28 28;
+  --red-800: 153 27 27;
+  --red-900: 127 29 29;
+
+  --sky-100: 224 242 254;
+  --sky-900: 12 74 110;
+
+  --violet-100: 237 233 254;
+  --violet-900: 76 29 149;
+
+  /* The sweep across a loading block, so it can differ between themes. */
+  --skeleton-base: 231 229 228;
+  --skeleton-shine: 245 245 244;
+
+  /*
+   * The chart line. Chosen per theme and checked with the palette validator
+   * against that theme surface rather than flipped automatically: a colour that
+   * reads well on near-white is usually too dark on near-black.
+   *   light  #059669 on #fafaf9  — lightness band, chroma floor, 3:1 contrast
+   *   dark   #10b981 on #181614  — the same checks against the dark surface
+   */
+  --chart-line: 5 150 105;
+  --chart-grid: 231 229 228;
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  /*
+   * Not an inversion of the light palette: pure white text on pure black is
+   * harsh to read for long, so the darkest surface is a warm near-black and the
+   * strongest text stops short of white.
+   */
+  --white: 28 25 23;
+
+  --stone-50: 24 22 20;
+  --stone-100: 35 32 30;
+  --stone-200: 52 48 45;
+  --stone-300: 73 68 64;
+  --stone-400: 125 118 112;
+  --stone-500: 161 154 148;
+  --stone-600: 191 185 179;
+  --stone-700: 214 209 204;
+  --stone-800: 234 230 226;
+  --stone-900: 245 243 240;
+
+  /*
+   * The accents keep their meaning and change their weight. A 50 or 100 tint is
+   * a pale wash on a white page and has to become a deep, quiet block on a dark
+   * one; the 700–900 end, used for text on those tints, becomes light instead.
+   */
+  --emerald-50: 10 44 34;
+  --emerald-100: 12 58 44;
+  --emerald-200: 16 78 58;
+  --emerald-300: 24 104 77;
+  --emerald-400: 34 160 114;
+  --emerald-500: 52 190 136;
+  --emerald-600: 72 206 152;
+  --emerald-700: 94 216 166;
+  --emerald-800: 140 230 190;
+  --emerald-900: 180 240 214;
+
+  --amber-50: 56 35 6;
+  --amber-100: 70 44 8;
+  --amber-200: 94 58 10;
+  --amber-300: 146 92 18;
+  --amber-400: 214 150 40;
+  --amber-500: 236 174 62;
+  --amber-600: 245 196 96;
+  --amber-700: 250 214 140;
+  --amber-800: 252 228 176;
+  --amber-900: 254 240 210;
+
+  --red-50: 62 22 22;
+  --red-100: 80 28 28;
+  --red-200: 104 34 34;
+  --red-300: 150 54 54;
+  --red-400: 214 92 92;
+  --red-500: 232 110 110;
+  --red-600: 240 140 140;
+  --red-700: 248 172 172;
+  --red-800: 250 196 196;
+  --red-900: 254 220 220;
+
+  --sky-100: 18 52 74;
+  --sky-900: 186 226 250;
+
+  --violet-100: 46 32 82;
+  --violet-900: 221 214 254;
+
+  --skeleton-base: 44 41 38;
+  --skeleton-shine: 60 56 52;
+
+  --chart-line: 16 185 129;
+  --chart-grid: 52 48 45;
+
+  /* Tells the browser to draw its own parts — scrollbars, form controls — dark. */
+  color-scheme: dark;
+}
+
+@layer base {
+  /*
+   * Before the stored choice has been read, the page is painted from the
+   * system preference, so someone who prefers dark does not get a white flash
+   * on every load. Once the choice is known, `data-theme` takes over.
+   */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']):not([data-theme='dark']) {
+      --white: 28 25 23;
+      --stone-50: 24 22 20;
+      --stone-100: 35 32 30;
+      --stone-200: 52 48 45;
+      --stone-300: 73 68 64;
+      --stone-400: 125 118 112;
+      --stone-500: 161 154 148;
+      --stone-600: 191 185 179;
+      --stone-700: 214 209 204;
+      --stone-800: 234 230 226;
+      --stone-900: 245 243 240;
+      --emerald-50: 10 44 34;
+      --emerald-100: 12 58 44;
+      --emerald-200: 16 78 58;
+      --emerald-300: 24 104 77;
+      --emerald-400: 34 160 114;
+      --emerald-500: 52 190 136;
+      --emerald-600: 72 206 152;
+      --emerald-700: 94 216 166;
+      --emerald-800: 140 230 190;
+      --emerald-900: 180 240 214;
+      --amber-50: 56 35 6;
+      --amber-100: 70 44 8;
+      --amber-200: 94 58 10;
+      --amber-300: 146 92 18;
+      --amber-400: 214 150 40;
+      --amber-500: 236 174 62;
+      --amber-600: 245 196 96;
+      --amber-700: 250 214 140;
+      --amber-800: 252 228 176;
+      --amber-900: 254 240 210;
+      --red-50: 62 22 22;
+      --red-100: 80 28 28;
+      --red-200: 104 34 34;
+      --red-300: 150 54 54;
+      --red-400: 214 92 92;
+      --red-500: 232 110 110;
+      --red-600: 240 140 140;
+      --red-700: 248 172 172;
+      --red-800: 250 196 196;
+      --red-900: 254 220 220;
+      --sky-100: 18 52 74;
+      --sky-900: 186 226 250;
+      --violet-100: 46 32 82;
+      --violet-900: 221 214 254;
+      --skeleton-base: 44 41 38;
+      --skeleton-shine: 60 56 52;
+      --chart-line: 16 185 129;
+      --chart-grid: 52 48 45;
+      color-scheme: dark;
+    }
+  }
+
+  /* Colour changes are eased so switching theme is a transition, not a jolt. */
+  body {
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+
+  /* Anyone who has asked for less motion gets none of it. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
 @layer components {
-  .btn { @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn { @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-50 disabled:cursor-not-allowed disabled:opacity-50; }
   .btn-primary { @apply btn bg-emerald-700 text-white hover:bg-emerald-800; }
   .btn-secondary { @apply btn border border-stone-300 bg-white text-stone-800 hover:bg-stone-100; }
   .btn-danger { @apply btn border border-red-300 bg-white text-red-700 hover:bg-red-50; }
-  .input { @apply w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600; }
+  .input { @apply w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600; }
   .card { @apply rounded-xl border border-stone-200 bg-white p-4 shadow-sm; }
   .label { @apply mb-1 block text-sm font-medium text-stone-700; }
+
+  /*
+   * A loading block. The sweep runs over a flat base so the shape is readable
+   * even where the animation is switched off.
+   */
+  .skeleton {
+    @apply rounded-md;
+    background-color: rgb(var(--skeleton-base));
+    background-image: linear-gradient(
+      90deg,
+      rgb(var(--skeleton-base)) 0%,
+      rgb(var(--skeleton-shine)) 50%,
+      rgb(var(--skeleton-base)) 100%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer;
+  }
+}
+
+/* In dark mode the white primary button text must stay light, not follow --white. */
+:root[data-theme='dark'] .btn-primary,
+:root[data-theme='dark'] .bg-emerald-700,
+:root[data-theme='dark'] .bg-emerald-800 {
+  color: rgb(250 250 249);
 }

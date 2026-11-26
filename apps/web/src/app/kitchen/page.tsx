@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import EmptyState from '@/components/EmptyState';
 import RequireRole from '@/components/RequireRole';
+import { Skeleton } from '@/components/Skeleton';
 import StatusBadge from '@/components/StatusBadge';
 import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
@@ -35,6 +37,9 @@ export default function KitchenPage() {
 
 function Kitchen() {
   const { t, lang } = useI18n();
+  // Which card is asking for a delivery code, and what has been typed into it.
+  const [confirming, setConfirming] = useState<number | null>(null);
+  const [code, setCode] = useState('');
   const c = useContent();
   const { data, isLoading, error } = useOrdersQuery(undefined, { pollingInterval: 5000 });
   const [setStatus, { isLoading: saving }] = useSetStatusMutation();
@@ -44,7 +49,7 @@ function Kitchen() {
   const orders = data?.orders ?? []; // oldest first
 
   /** Moving a card one column to the right is exactly the step the server allows. */
-  async function move(order: Order, target: OrderStatus) {
+  async function move(order: Order, target: OrderStatus, deliveryCode?: string) {
     setMessage('');
     if (NEXT[order.status]?.to !== target) {
       const column = COLUMNS.find((c) => c.status === NEXT[order.status]?.to);
@@ -52,22 +57,54 @@ function Kitchen() {
       return;
     }
     try {
-      await setStatus({ id: order.id, status: target }).unwrap();
+      await setStatus({ id: order.id, status: target, code: deliveryCode }).unwrap();
+      setConfirming(null);
+      setCode('');
     } catch (e) {
       setMessage(`#${order.id}: ${translateError(e, t)}`);
     }
   }
 
+  /**
+   * The last step is not like the others.
+   *
+   * "Delivered" claims the food reached the person who paid for it, and the
+   * kitchen cannot know that on its own — so that step opens the code box
+   * instead of moving the card.
+   */
   function advance(order: Order) {
     const step = NEXT[order.status];
-    if (step) void move(order, step.to);
+    if (!step) return;
+    if (step.to === 'DELIVERED') {
+      setMessage('');
+      setConfirming(order.id);
+      setCode('');
+      return;
+    }
+    void move(order, step.to);
   }
 
   return (
     <div>
       <h1 className="text-2xl font-semibold">{t('kitchen.title')}</h1>
       <p className="mt-1 text-sm text-stone-600">{t('kitchen.subtitle')}</p>
-      {isLoading && <p className="mt-4 text-stone-500">{t('common.loading')}</p>}
+      {isLoading && (
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-hidden="true">
+          {Array.from({ length: 4 }, (_, column) => (
+            <div key={column} className="space-y-3">
+              <Skeleton className="h-4 w-24" />
+              {Array.from({ length: 2 }, (_, card) => (
+                <div key={card} className="card space-y-2">
+                  <Skeleton className="h-4 w-16" />
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-5/6" />
+                  <Skeleton className="h-9 w-full rounded-lg" />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
       {error != null && <p role="alert" className="mt-4 text-red-700">{translateError(error, t)}</p>}
       {message && (
         <p role="alert" className="mt-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">
@@ -99,7 +136,14 @@ function Kitchen() {
                 const id = Number(readDragPayload(e));
                 const order = orders.find((o) => o.id === id);
                 setDragging(null);
-                if (order) void move(order, col.status);
+                if (!order) return;
+                if (col.status === 'DELIVERED') {
+                  setMessage('');
+                  setConfirming(order.id);
+                  setCode('');
+                  return;
+                }
+                void move(order, col.status);
               }}
               className={`rounded-xl border-2 border-dashed p-2 transition ${
                 hovered === col.status
@@ -144,19 +188,65 @@ function Kitchen() {
                     </p>
                     <ul className="mt-2 text-sm">
                       {o.items.map((i) => (
-                        <li key={i.itemId}>
+                        <li key={`${i.itemId}|${i.participant ?? ''}`}>
                           <strong>{i.quantity}</strong> × {c.dish(i.name)}
+                          {/* The name goes on the box, which is why the kitchen sees it. */}
+                          {i.participant && (
+                            <span className="ml-2 rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-700">
+                              {i.participant}
+                            </span>
+                          )}
                         </li>
                       ))}
                     </ul>
                     {o.notes && <p className="mt-2 rounded bg-amber-50 p-2 text-sm">{t('kitchen.note', { text: o.notes })}</p>}
-                    {NEXT[o.status] && (
-                      // The button is not there for niceness: dragging is impossible
-                      // with a keyboard or a touch screen, and the kitchen still has
-                      // to work on both.
-                      <button className="btn-primary mt-3 w-full" disabled={saving} onClick={() => advance(o)}>
-                        {t(NEXT[o.status]!.label)}
-                      </button>
+                    {confirming === o.id ? (
+                      <form
+                        className="mt-3 rounded-lg border border-emerald-300 bg-emerald-50 p-2"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void move(o, 'DELIVERED', code);
+                        }}
+                      >
+                        <label htmlFor={`code-${o.id}`} className="label">
+                          {t('confirm.enter')}
+                        </label>
+                        <input
+                          id={`code-${o.id}`}
+                          className="input text-center font-mono text-lg tracking-[0.3em]"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          maxLength={4}
+                          autoFocus
+                          value={code}
+                          onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ''))}
+                        />
+                        <p className="mt-1 text-xs text-stone-600">{t('confirm.enterHint')}</p>
+                        <div className="mt-2 flex gap-2">
+                          <button className="btn-primary flex-1" disabled={saving || code.length !== 4}>
+                            {t('confirm.submit')}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => {
+                              setConfirming(null);
+                              setCode('');
+                            }}
+                          >
+                            {t('common.cancel')}
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      NEXT[o.status] && (
+                        // The button is not there for niceness: dragging is impossible
+                        // with a keyboard or a touch screen, and the kitchen still has
+                        // to work on both.
+                        <button className="btn-primary mt-3 w-full" disabled={saving} onClick={() => advance(o)}>
+                          {t(NEXT[o.status]!.label)}
+                        </button>
+                      )
                     )}
                   </li>
                 ))}

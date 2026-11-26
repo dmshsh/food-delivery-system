@@ -1,16 +1,26 @@
 'use client';
 
 import { useState } from 'react';
+import EmptyState from '@/components/EmptyState';
 import RequireRole from '@/components/RequireRole';
+import { SkeletonChart, SkeletonStats, SkeletonTable } from '@/components/Skeleton';
+import TrendChart from '@/components/TrendChart';
 import StatusBadge from '@/components/StatusBadge';
 import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
 import type { MessageKey } from '@/i18n/dictionaries';
 import { ALL_STATUSES, formatDate, formatDateTime, formatKzt, stars, statusKey, translateError } from '@/lib/format';
-import type { OrderStatus } from '@/lib/types';
-import { useCustomerReportQuery, useDailyReportQuery, useDishReportQuery, useReportQuery } from '@/store/api';
+import type { ChartBucket, ChartMetric, OrderStatus } from '@/lib/types';
+import {
+  useChartQuery,
+  useCustomerReportQuery,
+  useDailyReportQuery,
+  useDishReportQuery,
+  useReportQuery,
+} from '@/store/api';
 
 const TABS = [
+  { id: 'chart', label: 'chart.title' },
   { id: 'orders', label: 'accounting.tab.orders' },
   { id: 'daily', label: 'accounting.tab.daily' },
   { id: 'dishes', label: 'accounting.tab.dishes' },
@@ -29,7 +39,9 @@ export default function AccountingPage() {
 
 function Accounting() {
   const { t } = useI18n();
-  const [tab, setTab] = useState<TabId>('orders');
+  // The chart first: "how is trade going" is the question somebody opens this
+  // page with, and the tables are where they go to answer the next one.
+  const [tab, setTab] = useState<TabId>('chart');
 
   return (
     <div>
@@ -50,6 +62,7 @@ function Accounting() {
       </div>
 
       <div className="mt-5">
+        {tab === 'chart' && <ChartReport />}
         {tab === 'orders' && <OrdersReport />}
         {tab === 'daily' && <DailyReport />}
         {tab === 'dishes' && <DishReport />}
@@ -100,6 +113,110 @@ function rangeQuery(range: { from: string; to: string }): string {
   return query ? `?${query}` : '';
 }
 
+// -------------------------------------------------------------- chart tab
+
+function ChartReport() {
+  const { t } = useI18n();
+  const [range, setRange] = useState({ from: '', to: '' });
+  const [metric, setMetric] = useState<ChartMetric>('revenue');
+  const [bucket, setBucket] = useState<ChartBucket>('day');
+  const { data, isLoading, error, refetch } = useChartQuery({ metric, bucket, ...rangeOnly(range) });
+
+  return (
+    <div>
+      {/* The controls sit in one row above the chart, not beside it. */}
+      <div className="card flex flex-wrap items-end gap-3">
+        <div>
+          <label htmlFor="metric" className="label">{t('chart.metric')}</label>
+          <select
+            id="metric"
+            className="input"
+            value={metric}
+            onChange={(e) => setMetric(e.target.value as ChartMetric)}
+          >
+            <option value="revenue">{t('chart.revenue')}</option>
+            <option value="orders">{t('chart.orders')}</option>
+            <option value="averageOrder">{t('chart.averageOrder')}</option>
+            <option value="customers">{t('chart.customers')}</option>
+          </select>
+        </div>
+        <div>
+          <label htmlFor="bucket" className="label">{t('chart.groupBy')}</label>
+          <select
+            id="bucket"
+            className="input"
+            value={bucket}
+            onChange={(e) => setBucket(e.target.value as ChartBucket)}
+          >
+            <option value="day">{t('chart.day')}</option>
+            <option value="week">{t('chart.week')}</option>
+            <option value="month">{t('chart.month')}</option>
+          </select>
+        </div>
+        <div>
+          <label htmlFor="chart-from" className="label">{t('common.from')}</label>
+          <input
+            id="chart-from"
+            type="date"
+            className="input"
+            value={range.from}
+            onChange={(e) => setRange({ ...range, from: e.target.value })}
+          />
+        </div>
+        <div>
+          <label htmlFor="chart-to" className="label">{t('common.to')}</label>
+          <input
+            id="chart-to"
+            type="date"
+            className="input"
+            value={range.to}
+            onChange={(e) => setRange({ ...range, to: e.target.value })}
+          />
+        </div>
+        {(range.from || range.to) && (
+          <button type="button" className="btn-secondary" onClick={() => setRange({ from: '', to: '' })}>
+            {t('common.clear')}
+          </button>
+        )}
+      </div>
+
+      {isLoading && (
+        <div className="mt-4">
+          <SkeletonChart />
+        </div>
+      )}
+      {error != null && (
+        <div className="mt-4">
+          <EmptyState
+            kind="error"
+            title={t('common.error')}
+            description={translateError(error, t)}
+            onAction={() => refetch()}
+            actionLabel={t('common.retry')}
+          />
+        </div>
+      )}
+
+      {data && data.summary.orderCount === 0 && (
+        <div className="mt-4">
+          <EmptyState kind="noMatch" title={t('chart.noData')} description={t('chart.noDataHint')} />
+        </div>
+      )}
+
+      {data && data.summary.orderCount > 0 && (
+        <div className="mt-4">
+          <TrendChart series={data} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Only the sides of the range that were filled in. */
+function rangeOnly(range: { from: string; to: string }) {
+  return { ...(range.from ? { from: range.from } : {}), ...(range.to ? { to: range.to } : {}) };
+}
+
 // ------------------------------------------------------------- orders tab
 
 function OrdersReport() {
@@ -128,7 +245,12 @@ function OrdersReport() {
         <a className="btn-secondary ml-auto" href={csvUrl} download>{t('accounting.downloadCsv')}</a>
       </div>
 
-      {isLoading && <p className="mt-4 text-stone-500">{t('common.loading')}</p>}
+      {isLoading && (
+        <div className="mt-4 space-y-4">
+          <SkeletonStats count={5} />
+          <SkeletonTable rows={6} columns={9} />
+        </div>
+      )}
       {error != null && <p role="alert" className="mt-4 text-red-700">{translateError(error, t)}</p>}
 
       {data && (
@@ -225,7 +347,12 @@ function DailyReport() {
   return (
     <div>
       <RangePicker range={range} onChange={setRange} csvUrl={`/api/reports/daily/export.csv${rangeQuery(range)}`} />
-      {isLoading && <p className="mt-4 text-stone-500">{t('common.loading')}</p>}
+      {isLoading && (
+        <div className="mt-4 space-y-4">
+          <SkeletonStats count={4} />
+          <SkeletonTable rows={5} columns={6} />
+        </div>
+      )}
       {error != null && <p role="alert" className="mt-4 text-red-700">{translateError(error, t)}</p>}
 
       {data && (
@@ -303,7 +430,12 @@ function DishReport() {
   return (
     <div>
       <RangePicker range={range} onChange={setRange} csvUrl={`/api/reports/dishes/export.csv${rangeQuery(range)}`} />
-      {isLoading && <p className="mt-4 text-stone-500">{t('common.loading')}</p>}
+      {isLoading && (
+        <div className="mt-4 space-y-4">
+          <SkeletonStats count={4} />
+          <SkeletonTable rows={5} columns={6} />
+        </div>
+      )}
       {error != null && <p role="alert" className="mt-4 text-red-700">{translateError(error, t)}</p>}
 
       {data && (
@@ -386,7 +518,12 @@ function CustomerReport() {
   return (
     <div>
       <RangePicker range={range} onChange={setRange} csvUrl={`/api/reports/customers/export.csv${rangeQuery(range)}`} />
-      {isLoading && <p className="mt-4 text-stone-500">{t('common.loading')}</p>}
+      {isLoading && (
+        <div className="mt-4 space-y-4">
+          <SkeletonStats count={4} />
+          <SkeletonTable rows={5} columns={6} />
+        </div>
+      )}
       {error != null && <p role="alert" className="mt-4 text-red-700">{translateError(error, t)}</p>}
 
       {data && (

@@ -6,16 +6,21 @@ import type {
   BonusAccount,
   CheckoutOutcome,
   CreateOrderBody,
+  ChartBucket,
+  ChartMetric,
+  ChartSeries,
   CustomerReport,
   DailyReport,
+  DishFilter,
   DishReport,
   FeedbackList,
   FullProfile,
   HistoryFilter,
   IpList,
   Language,
-  MenuItem,
   MenuItemBody,
+  MenuResponse,
+  NutritionResponse,
   Order,
   OrderResult,
   OrderStatus,
@@ -92,9 +97,25 @@ export const api = createApi({
     }),
 
     // ---- menu
-    menu: build.query<{ items: MenuItem[] }, void>({
-      query: () => '/menu',
+    menu: build.query<MenuResponse, DishFilter | void>({
+      query: (arg) => {
+        const filter = (arg ?? {}) as DishFilter;
+        const params: Record<string, string> = {};
+        if (filter.search?.trim()) params.search = filter.search.trim();
+        if (filter.maxCalories) params.maxCalories = String(filter.maxCalories);
+        if (filter.minCalories) params.minCalories = String(filter.minCalories);
+        if (filter.maxPriceTiyn) params.maxPriceTiyn = String(filter.maxPriceTiyn);
+        if (filter.tags?.length) params.tags = filter.tags.join(',');
+        if (filter.withoutTags?.length) params.withoutTags = filter.withoutTags.join(',');
+        if (filter.sort && filter.sort !== 'menu') params.sort = filter.sort;
+        return { url: '/menu', params };
+      },
       providesTags: ['Menu'],
+    }),
+
+    // ---- what a basket adds up to
+    nutrition: build.query<NutritionResponse, { itemId: number; quantity: number }[]>({
+      query: (items) => ({ url: '/nutrition/summary', method: 'POST', body: { items } }),
     }),
 
     // ---- orders
@@ -116,8 +137,9 @@ export const api = createApi({
       // A paid order moves points, so the bonus balance and the session profile change too.
       invalidatesTags: ['Orders', 'Report', 'Bonus', 'Session'],
     }),
-    setStatus: build.mutation<{ order: Order }, { id: number; status: OrderStatus }>({
-      query: ({ id, status }) => ({ url: `/orders/${id}/status`, method: 'PATCH', body: { status } }),
+    setStatus: build.mutation<{ order: Order }, { id: number; status: OrderStatus; code?: string }>({
+      // The last step carries the four digits the customer read out at the door.
+      query: ({ id, status, code }) => ({ url: `/orders/${id}/status`, method: 'PATCH', body: { status, code } }),
       invalidatesTags: ['Orders', 'Report'],
     }),
     leaveFeedback: build.mutation<{ order: Order }, { id: number; rating: number; comment: string }>({
@@ -176,6 +198,13 @@ export const api = createApi({
     }),
     customerReport: build.query<CustomerReport, { from?: string; to?: string } | void>({
       query: (arg) => ({ url: '/reports/customers', params: rangeParams(arg) }),
+      providesTags: ['Report'],
+    }),
+    chart: build.query<ChartSeries, { metric: ChartMetric; bucket: ChartBucket; from?: string; to?: string }>({
+      query: ({ metric, bucket, from, to }) => ({
+        url: '/reports/chart',
+        params: { metric, bucket, ...(from ? { from } : {}), ...(to ? { to } : {}) },
+      }),
       providesTags: ['Report'],
     }),
 
@@ -260,6 +289,7 @@ export const {
   useRegisterMutation,
   useLogoutMutation,
   useMenuQuery,
+  useNutritionQuery,
   useOrdersQuery,
   useLazyRepeatOrderQuery,
   useCreateOrderMutation,
@@ -270,6 +300,7 @@ export const {
   useDailyReportQuery,
   useDishReportQuery,
   useCustomerReportQuery,
+  useChartQuery,
   useProfileQuery,
   useUpdateProfileMutation,
   useSetLanguageMutation,

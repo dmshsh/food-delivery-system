@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Pool, PoolClient, types } from 'pg';
+import { runMigrations } from './migrate';
 import { seedDemoData } from './seed';
 
 // COUNT() and SUM() return bigint, which node-postgres gives as strings by default.
@@ -15,11 +15,20 @@ export class DbService implements OnModuleInit, OnModuleDestroy {
     connectionString: process.env.DATABASE_URL ?? 'postgres://food:food@localhost:5433/food_delivery',
   });
 
+  /** Where the numbered migration files live, from the compiled output. */
+  static readonly migrationsDir = join(__dirname, '..', '..', 'sql', 'migrations');
+
   async onModuleInit() {
-    const schema = readFileSync(join(__dirname, '..', '..', 'sql', 'schema.sql'), 'utf8');
-    await this.pool.query(schema);
+    // The server will not serve a request against a schema it has not finished
+    // bringing up to date: a failure here stops the start-up.
+    const result = await runMigrations(this.pool, DbService.migrationsDir, (message) => this.log.log(message));
     const seeded = await seedDemoData(this.pool);
-    this.log.log(seeded ? 'Schema ready, demo data created' : 'Schema ready');
+    const seedNote = seeded ? ', demo data created' : '';
+    this.log.log(
+      result.applied.length
+        ? `Schema ready: ${result.applied.length} migration(s) applied${seedNote}`
+        : `Schema ready: nothing to apply${seedNote}`,
+    );
   }
 
   async onModuleDestroy() {

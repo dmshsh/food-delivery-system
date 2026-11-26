@@ -1,6 +1,6 @@
 # Food Delivery System — Test Report
 
-**Report date:** 19 November 2026
+**Report date:** 27 November 2026
 **Subject:** the test set for the second delivery (drag and drop, bonus points, feedback, admin panel,
 sign-in security), together with the first delivery's tests, which were re-run to prove nothing broke.
 
@@ -10,32 +10,35 @@ sign-in security), together with the first delivery's tests, which were re-run t
 
 | Suite | What it proves | Checks | Result |
 |---|---|---|---|
-| Unit (`npm test`) | The rules themselves, as pure functions with no database and no framework | 65 | **all pass** |
-| Database (`npm test` with `DATABASE_URL`) | That a real PostgreSQL refuses bad data on its own | 12 | **all pass** |
+| Unit (`npm test`) | The rules themselves, as pure functions with no database and no framework | 93 | **all pass** |
+| Database (`npm test` with `DATABASE_URL`) | That a real PostgreSQL refuses bad data on its own | 17 | **all pass** |
 | End-to-end, first delivery (`node test/e2e.mjs`) | Ordering, payment, roles and accounting over HTTP | 15 | **all pass** |
 | End-to-end, second delivery (`node test/e2e-features.mjs`) | Drag and drop, bonus points, feedback, the admin panel, sign-in limits | 27 | **all pass** |
 | End-to-end, third delivery (`node test/e2e-week3.mjs`) | Languages, the profile, passwords, addresses, history, reports, the server | 35 | **all pass** |
-| **Total** | | **154** | **154 pass, 0 fail** |
+| End-to-end, fourth delivery (`node test/e2e-week4.mjs`) | The dish search, nutrition, group orders, delivery codes, the chart, and nine parallel-request checks | 32 | **all pass** |
+| **Total** | | **219** | **219 pass, 0 fail** |
 
-**New this week: 72 checks** — 32 unit, 5 database, 35 end-to-end. The brief asked for 30.
+**New this week: 65 checks** — 28 unit, 5 database, 32 end-to-end.
 
-The 42 end-to-end checks written for the first two deliveries were run again after every change and
-still pass unchanged. That is the evidence that languages, the profile, the password work and the
-address limiter did not quietly alter ordering, payment, bonus points or the role rules.
+The 77 end-to-end checks from the earlier deliveries were run again after every change. Two of them
+failed, and both failures were right: the shape of an order line changed, and a delivery can no longer be
+closed without a code. Those two tests were updated deliberately, which is the whole purpose of keeping
+them. A third fault — an update that erased nutrition — was found by a week-3 test that predates nutrition
+entirely.
 
 ---
 
 ## 2. How to run
 
 ```sh
-npm run db:up                                                           # 1) PostgreSQL in Docker
+npm run db:up                                                           # 1) PostgreSQL in Docker (migrations run at API start)
 DATABASE_URL=postgres://food:food@localhost:5433/food_delivery npm test  # unit + database
 npm run dev:api                                                          # 2) in a second terminal
-npm run test:e2e                                                         # 3) all three HTTP suites
+npm run test:e2e                                                         # 3) all four HTTP suites
 ```
 
 Without `DATABASE_URL` the database tests skip themselves and only the pure rules run. `npm run test:e2e`
-runs the three suites in order and stops at the first failing one. The database tests need `psql` on the
+runs the four suites in order and stops at the first failing one. The database tests need `psql` on the
 PATH.
 
 The end-to-end suites register throwaway accounts named `e2e-…@example.test`, each with its own phone
@@ -363,6 +366,138 @@ session, and every customer is registered fresh with a phone number no other acc
 
 ---
 
+---
+
+## 6d. Unit tests added in the fourth delivery — 28 checks
+
+### `test/nutrition.test.ts` (9 checks)
+
+| # | Check | Why it matters |
+|---|---|---|
+| 1 | an order is the sum of its dishes, times how many of each | |
+| 2 | a dish nobody has measured is counted, not guessed at | Treating unknown as zero would report a 900 kcal order as 400 and call it light |
+| 3 | a broken quantity contributes nothing rather than a negative total | |
+| 4 | the share of a reference day is a plain percentage | |
+| 5 | the energy split is worked out from the macronutrients and always adds to 100 | Checked on three awkward ratios; rounding must never leave it at 99 or 101 |
+| 6 | a large order is named as such, a small one is not | |
+| 7 | the advice describes the balance, and says where the numbers came from | Every line carries its own figures, so the page can say it in any language |
+| 8 | an empty basket produces no claims at all | |
+| 9 | the summary carries the totals, the split, the share and the advice together | |
+
+### `test/week4.test.ts` (19 checks)
+
+| # | Check | Why it matters |
+|---|---|---|
+| 10 | only migrations never applied are pending, in file order | |
+| 11 | editing one that has already run is an error, not a silent re-run | The database would no longer match the file that claims to describe it |
+| 12 | a line-ending difference is not a change | Checked out on Windows, written on Linux: the same file |
+| 13 | one recorded but missing from disk is reported | |
+| 14 | group names are trimmed, blanks dropped, and two are the minimum | A group of one is not a group |
+| 15 | the same name twice would split the bill wrongly | Compared without case, so Alice and alice are one person |
+| 16 | every line names somebody who is actually in the order | |
+| 17 | the same dish for the same person twice is one line, not two | |
+| 18 | a group with every dish unassigned would have nothing to split | |
+| 19 | the people are part of the order fingerprint | Otherwise a retry could arrive with a different bill split |
+| 20 | an empty dish search narrows nothing | |
+| 21 | calories, budget and labels are read from a query string | Including a repeated parameter, which arrives as an array |
+| 22 | an unknown label, a backwards range and a contradiction are refused | "Must be vegan" and "must not be vegan" can never match |
+| 23 | the labels are a closed list, shared with the database | |
+| 24 | dish nutrition: empty means unmeasured, a figure given has to be real | |
+| 25 | **an update leaves out what it does not mention** | The regression guard for the third fault below |
+| 26 | a delivery code is four digits, however it arrives | A JSON number loses its leading zero, so it is read as text |
+| 27 | the chart defaults to revenue by day | |
+| 28 | every metric and bucket the chart offers is accepted, and nothing else | |
+
+---
+
+## 6e. Database tests added in the fourth delivery — 5 checks
+
+| # | Check | What it proves |
+|---|---|---|
+| 1 | migrations are recorded, and each one only once | The primary key is what makes "exactly once" a guarantee rather than an intention |
+| 2 | nutrition on a dish must be possible, and its labels must be known | Negative and absurd figures refused; an invented label refused; blank still allowed |
+| 3 | a group order holds people, and an ordinary one holds none | Both inconsistent states are refused by a CHECK |
+| 4 | the same dish for two people is two rows; for one person it is one | The new primary key, from both sides |
+| 5 | a delivery code is four digits or nothing, and guesses cannot be counted backwards | |
+
+---
+
+## 6f. End-to-end tests of the fourth delivery — 32 checks
+
+`node test/e2e-week4.mjs`.
+
+### The dish search (6 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 1 | the menu carries nutrition, and the six seeded dishes are measured | |
+| 2 | a dish can be found by what is in it | "chicken" matches the ingredients, not only the name |
+| 3 | a dish can be found by calories and by budget | And by both at once, which is the real question |
+| 4 | labels narrow the menu both ways | Required and excluded |
+| 5 | a filter that cannot mean anything is refused (400) | |
+| 6 | the menu can be sorted by price and by calories | |
+
+### Nutrition (3 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 7 | a basket adds up, and the figures come from the server | The split adds to 100 and the advice is attached |
+| 8 | a large basket is named as such, an empty one makes no claims | |
+| 9 | a basket with broken quantities is refused (400) | |
+
+### Group orders (4 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 10 | a group order splits the bill between the people in it | The shares add up to the whole order |
+| 11 | the same dish for two people is two lines, not one | |
+| 12 | a stranger, a group of one, or an unassigned dish is refused (400) | |
+| 13 | the kitchen sees the names but still no money, and no code | |
+
+### Delivery confirmation (3 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 14 | an approved payment issues a four-digit code, to the customer only | |
+| 15 | delivery needs the code: a wrong one is refused and counted | And the order stays on its way, not delivered |
+| 16 | the right code completes the delivery and records when | |
+
+### The chart (5 checks)
+
+| # | Check | What it proves |
+|---|---|---|
+| 17 | a point for every bucket, including the empty ones | Ten days asked for, ten points returned |
+| 18 | the chart agrees with the reports it is drawn from | Two views of the same data must not disagree |
+| 19 | an average has no value where there is nothing to average | Zero would look like a fall rather than an absence |
+| 20 | every metric and bucket is accepted, the rest refused (400) | |
+| 21 | the chart is closed to customers and the kitchen (403) | |
+
+### Parallel requests (9 checks)
+
+These fire several requests at the same instant. Each asserts the same shape of thing: exactly one may
+win, and the database afterwards shows exactly one effect.
+
+| # | Check | What it proves |
+|---|---|---|
+| 22 | the same order attempt sent five times creates one order | One creation, four replays, one row in the history |
+| 23 | two checkouts of one order pay exactly once | The points earned are the proof the money moved once |
+| 24 | bonus points cannot be spent twice at once | The balance never goes negative and matches its own history |
+| 25 | two couriers with the right code deliver the order once | |
+| 26 | five wrong codes at once do not add up to a delivery | |
+| 27 | two registrations with the same email create one account | |
+| 28 | two registrations with the same phone create one account | |
+| 29 | two dishes created with one name leave one dish | |
+| 30 | twenty simultaneous reads of one order never disagree | The read path is not quietly stateful |
+| 31 | the menu stays one list while two people reorder it | No dish lost, none duplicated |
+
+### Everything else (1 check)
+
+| # | Check |
+|---|---|
+| 32 | the seeded staff sign in |
+
+---
+
 ## 7. What is not covered by an automated test
 
 Honesty about the gaps matters more than a full-looking table.
@@ -377,6 +512,8 @@ Honesty about the gaps matters more than a full-looking table.
 | A reset link expiring after 30 minutes | The same again. That a link works once, and that a new one retires the old, *are* covered |
 | The mobile layout | The collapsing navigation, the scrolling tables and the card layout on a phone were checked by hand at phone and desktop widths |
 | A migration meeting data it refuses to touch | Exercised by hand against a database that held duplicate phone numbers: the index was not created, the warning named the clean-up script, and the service-level check held the rule meanwhile |
+| The dark theme and the skeletons | Both are about what a page looks like while and after it loads, which needs a browser to judge. Checked by hand in both themes, at phone and desktop widths, with the system preference switched back and forth |
+| The order page and the group-order form | The endpoints behind them are covered end to end; the pages themselves were used by hand |
 | The production containers actually running | `docker compose -f docker-compose.prod.yml config` is run, which proves the file is valid and that it refuses to start without a `JWT_SECRET`. Building and running the three images is a manual step |
 | Visual layout | Checked by hand at phone and desktop widths |
 
@@ -392,16 +529,22 @@ Honesty about the gaps matters more than a full-looking table.
 | **(third delivery)** "Other devices have been signed out" was decided by comparing the token's issue time with the password's change time. A JWT records whole seconds, so a session opened in the same second as the change survived — a window of up to one second, and an end-to-end check that passed or failed depending on the clock | Replaced with a session generation: `users.token_version` is carried in every token and raised when a password changes, so old tokens are refused exactly. The clock is no longer involved, and the test is deterministic |
 | **(third delivery)** The unique index on phone numbers could not be created on an existing database, because earlier test runs had registered every account with the same number | Two changes. The migration now reports the clash and names a clean-up script instead of failing the start-up or rewriting rows, and `UniquenessService` holds the rule meanwhile. The suites now generate a distinct number per account, which is what a system with unique phone numbers should have been testing all along |
 | **(third delivery)** The first CSV check counted columns with a regular expression that produced one field too many, and failed against correct output | The check now parses the line the way a spreadsheet does. Splitting on commas was exactly the mistake the quoting exists to survive, so the test had to stop making it |
+| **(fourth delivery)** A wrong delivery code hung the request for ever. The count of wrong guesses was written on a second connection while the enclosing transaction held `SELECT … FOR UPDATE` on that same order row, so the update queued behind a lock its own caller was holding | The count now shares the transaction that refuses the code: the helper *returns* the refusal, the transaction commits the increment, and the error is raised afterwards. Visible in `pg_stat_activity` as one connection `idle in transaction` and another `active` in `Lock` |
+| **(fourth delivery)** Two people reordering the menu at the same time produced a 500. Each transaction updated every row, in a different sequence, so each held what the other needed and PostgreSQL broke the tie by killing one | The rows are now locked in a fixed order — by id, never by the order being applied — so the second simply waits for the first |
+| **(fourth delivery)** Saving a dish erased its nutrition. A `PATCH` that mentioned only the name and the price wrote `null` into the calories, because "the field was not sent" and "the field was cleared" looked the same to the server. Found by a week-3 test written before nutrition existed, which changed a price and silently blanked the figures | An update now touches only the columns the request named; an explicit `null` still clears a figure deliberately. Unit check 25 guards it |
 
 ---
 
 ## 9. Conclusion
 
-All 154 automated checks pass. The third delivery's features are covered at the same three levels as the
-earlier ones — the rules on their own, the database's own refusals, and the behaviour over HTTP — and the
-42 checks from the first two deliveries still pass unchanged, so the new work did not break the old.
+All 219 automated checks pass.
 
-Three of this week's defects were found by the tests rather than by a reader, and two of them were real
-faults in the product: a one-second window in which a signed-out session kept working, and a migration
-that could not be applied to a database that already had data in it. Both are described above, with what
-replaced them.
+This week's set is the first to test what happens when requests arrive **at the same time** rather than one
+after another, and that is where it earned its keep. Of the three real faults found, two were invisible to
+every sequential test and to reading the code: a transaction waiting on a lock it was itself holding, and
+two writers taking the same rows in opposite orders. The third — an update that erased data it had not been
+asked about — was found by a test written three weeks earlier, for a feature that had nothing to do with it.
+
+That is the argument for keeping the old suites running: of this week's three faults, two were caught by
+tests written for other purposes, and the two old checks that "failed" were not regressions at all but the
+suite correctly noticing that an interface had changed.

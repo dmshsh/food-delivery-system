@@ -2,19 +2,30 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import GroupOrder from '@/components/GroupOrder';
+import NutritionPanel from '@/components/NutritionPanel';
 import RequireRole from '@/components/RequireRole';
+import { SkeletonForm } from '@/components/Skeleton';
 import StatusBadge from '@/components/StatusBadge';
 import { useSession } from '@/components/useSession';
 import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
 import { errorCode, formatKzt, formatPoints, isNetworkError, translateError } from '@/lib/format';
 import type { CheckoutOutcome, Order } from '@/lib/types';
-import { useBonusQuery, useCheckoutMutation, useCreateOrderMutation, useMenuQuery, useOrdersQuery } from '@/store/api';
 import {
+  useBonusQuery,
+  useCheckoutMutation,
+  useCreateOrderMutation,
+  useMenuQuery,
+  useNutritionQuery,
+  useOrdersQuery,
+} from '@/store/api';
+import {
+  MAX_QUANTITY,
+  cartLines,
   clearCart,
   clearDraft,
   draftSaved,
-  MAX_QUANTITY,
   setBonusPoints,
   setField,
   setQuantity,
@@ -91,15 +102,28 @@ function Checkout() {
     }
   }, [order, dispatch]);
 
+  const items = menu.data?.items ?? [];
   const lines = useMemo(
     () =>
-      (menu.data?.items ?? [])
-        .filter((item) => cart.quantities[item.id])
-        .map((item) => ({ item, quantity: cart.quantities[item.id] })),
-    [menu.data, cart.quantities],
+      cartLines(cart)
+        .map((line) => ({ line, item: items.find((i) => i.id === line.itemId) }))
+        .filter((entry): entry is { line: (typeof entry)['line']; item: NonNullable<(typeof entry)['item']> } =>
+          Boolean(entry.item),
+        )
+        .sort((a, b) => a.item.name.localeCompare(b.item.name) || a.line.participant.localeCompare(b.line.participant)),
+    [cart, items],
   );
-  const total = lines.reduce((sum, l) => sum + l.quantity * l.item.priceTiyn, 0);
+
+  const total = lines.reduce((sum, l) => sum + l.line.quantity * l.item.priceTiyn, 0);
   const frozen = Boolean(draft); // details cannot change while an attempt is in flight
+
+  // What the basket adds up to. Asked of the server, because the figures belong
+  // to the dishes and not to the browser.
+  const nutritionItems = useMemo(
+    () => lines.map(({ line }) => ({ itemId: line.itemId, quantity: line.quantity })),
+    [lines],
+  );
+  const nutrition = useNutritionQuery(nutritionItems, { skip: nutritionItems.length === 0 });
 
   // ---- bonus points. The same two limits the server applies, shown before it has to say no.
   const balance = bonus.data?.balance ?? profile?.bonusPoints ?? 0;
@@ -113,8 +137,8 @@ function Checkout() {
   const willEarn = Math.floor((payable * (earnPercent / 100)) / pointTiyn);
   const points = (n: number) => formatPoints(n, lang, t('common.points'));
 
-  // The cart can change after points were chosen, so the stored number is trimmed
-  // back to what the new total allows instead of being refused by the server.
+  const unassigned = cart.participants.length > 0 && lines.some(({ line }) => !line.participant);
+
   useEffect(() => {
     if (!frozen && cart.bonusPoints > maxPoints) dispatch(setBonusPoints(maxPoints));
   }, [cart.bonusPoints, maxPoints, frozen, dispatch]);
@@ -124,6 +148,7 @@ function Checkout() {
     let d = cart.draft;
     if (!d) {
       if (!cart.deliveryAddress.trim()) return setError(t('checkout.needAddress'));
+      if (unassigned) return setError(t('group.assignAll'));
       d = {
         attemptId: newAttemptId(),
         payload: {
@@ -131,7 +156,12 @@ function Checkout() {
           deliveryTime: cart.deliveryTime ? new Date(cart.deliveryTime).toISOString() : 'ASAP',
           notes: cart.notes.trim(),
           bonusPoints: usedPoints,
-          items: lines.map((l) => ({ itemId: l.item.id, quantity: l.quantity })),
+          participants: cart.participants,
+          items: lines.map(({ line }) => ({
+            itemId: line.itemId,
+            quantity: line.quantity,
+            participant: line.participant,
+          })),
         },
       };
       dispatch(startDraft(d));
@@ -187,9 +217,23 @@ function Checkout() {
           {Boolean(done.bonusEarned) && t('checkout.earnedPoints', { points: points(done.bonusEarned ?? 0) })}
         </p>
       )}
+      {done.status === 'CONFIRMED' && done.confirmationCode && (
+        <div className="mt-3 rounded-lg border border-emerald-400 bg-white p-3">
+          <p className="text-sm font-medium">{t('confirm.title')}</p>
+          <p className="mt-1 font-mono text-3xl tracking-[0.3em] text-emerald-900">{done.confirmationCode}</p>
+          <p className="mt-1 text-xs text-stone-600">{t('confirm.showAtDoor')}</p>
+        </div>
+      )}
       <div className="mt-3 flex flex-wrap gap-2">
-        <Link href="/orders" className="btn-primary">{t('checkout.myOrders')}</Link>
-        <button className="btn-secondary" onClick={() => setDone(null)}>{t('checkout.dismiss')}</button>
+        <Link href={`/orders/${done.id}`} className="btn-primary">
+          {t('order.open')}
+        </Link>
+        <Link href="/orders" className="btn-secondary">
+          {t('checkout.myOrders')}
+        </Link>
+        <button className="btn-secondary" onClick={() => setDone(null)}>
+          {t('checkout.dismiss')}
+        </button>
       </div>
     </div>
   );
@@ -207,8 +251,11 @@ function Checkout() {
           </div>
           <ul className="mt-3 divide-y divide-stone-100 text-sm">
             {order.items.map((i) => (
-              <li key={i.itemId} className="flex justify-between gap-3 py-1.5">
-                <span>{i.quantity} × {c.dish(i.name)}</span>
+              <li key={`${i.itemId}|${i.participant ?? ''}`} className="flex justify-between gap-3 py-1.5">
+                <span>
+                  {i.quantity} × {c.dish(i.name)}
+                  {i.participant && <span className="ml-2 text-stone-500">· {i.participant}</span>}
+                </span>
                 <span className="whitespace-nowrap">{formatKzt((i.unitPriceTiyn ?? 0) * i.quantity, lang)}</span>
               </li>
             ))}
@@ -219,7 +266,9 @@ function Checkout() {
           </p>
           {Boolean(order.bonusRequested) && (
             <p className="flex justify-between text-sm text-amber-800">
-              <span>{t('checkout.bonusTitle')} ({points(order.bonusRequested ?? 0)})</span>
+              <span>
+                {t('checkout.bonusTitle')} ({points(order.bonusRequested ?? 0)})
+              </span>
               <span>−{formatKzt(order.discountTiyn ?? 0, lang)}</span>
             </p>
           )}
@@ -229,10 +278,8 @@ function Checkout() {
           </p>
           <p className="mt-2 text-sm text-stone-600">
             {t('checkout.delivery')}:{' '}
-            {order.deliveryTime
-              ? new Date(order.deliveryTime).toLocaleString(lang === 'en' ? 'en-GB' : lang)
-              : t('checkout.asap')}{' '}
-            · {order.deliveryAddress}
+            {order.deliveryTime ? new Date(order.deliveryTime).toLocaleString(lang) : t('checkout.asap')} ·{' '}
+            {order.deliveryAddress}
           </p>
           <p className="mt-3 text-sm" aria-live="polite">
             {t('checkout.timeLeft')}{' '}
@@ -266,7 +313,22 @@ function Checkout() {
               </button>
             </div>
           )}
-          {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+          {error && (
+            <p role="alert" className="mt-3 text-sm text-red-700">
+              {error}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (menu.isLoading) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <h1 className="text-2xl font-semibold">{t('checkout.title')}</h1>
+        <div className="mt-4">
+          <SkeletonForm fields={5} />
         </div>
       </div>
     );
@@ -279,7 +341,9 @@ function Checkout() {
         {resultBanner}
         <div className="card">
           <p>{t('checkout.empty')}</p>
-          <Link href="/" className="btn-primary mt-3">{t('checkout.browseMenu')}</Link>
+          <Link href="/" className="btn-primary mt-3">
+            {t('checkout.browseMenu')}
+          </Link>
         </div>
       </div>
     );
@@ -291,31 +355,58 @@ function Checkout() {
       <h1 className="text-2xl font-semibold">{t('checkout.title')}</h1>
 
       <section className="card mt-4" aria-labelledby="cart-h">
-        <h2 id="cart-h" className="font-medium">{t('checkout.yourOrder')}</h2>
+        <h2 id="cart-h" className="font-medium">
+          {t('checkout.yourOrder')}
+        </h2>
         <ul className="mt-2 divide-y divide-stone-100">
-          {lines.map(({ item, quantity }) => (
-            <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm">
-              <span className="min-w-[8rem] flex-1">{c.dish(item.name)}</span>
-              <div className="flex items-center gap-2">
-                <button
-                  className="btn-secondary px-3 py-1"
-                  disabled={frozen}
-                  aria-label={t('menu.removeOne', { name: item.name })}
-                  onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: quantity - 1 }))}
-                >
-                  −
-                </button>
-                <span className="w-5 text-center">{quantity}</span>
-                <button
-                  className="btn-secondary px-3 py-1"
-                  disabled={frozen || quantity >= MAX_QUANTITY}
-                  aria-label={t('menu.addOne', { name: item.name })}
-                  onClick={() => dispatch(setQuantity({ itemId: item.id, quantity: quantity + 1 }))}
-                >
-                  +
-                </button>
+          {lines.map(({ line, item }) => (
+            <li key={`${line.itemId}|${line.participant}`} className="py-2 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="min-w-[8rem] flex-1">
+                  {c.dish(item.name)}
+                  {line.participant && (
+                    <span className="ml-2 rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-700">
+                      {line.participant}
+                    </span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="btn-secondary px-3 py-1"
+                    disabled={frozen}
+                    aria-label={t('menu.removeOne', { name: c.dish(item.name) })}
+                    onClick={() =>
+                      dispatch(
+                        setQuantity({
+                          itemId: line.itemId,
+                          participant: line.participant,
+                          quantity: line.quantity - 1,
+                        }),
+                      )
+                    }
+                  >
+                    −
+                  </button>
+                  <span className="w-5 text-center">{line.quantity}</span>
+                  <button
+                    className="btn-secondary px-3 py-1"
+                    disabled={frozen || line.quantity >= MAX_QUANTITY}
+                    aria-label={t('menu.addOne', { name: c.dish(item.name) })}
+                    onClick={() =>
+                      dispatch(
+                        setQuantity({
+                          itemId: line.itemId,
+                          participant: line.participant,
+                          quantity: line.quantity + 1,
+                        }),
+                      )
+                    }
+                  >
+                    +
+                  </button>
+                </div>
+                <span className="w-24 text-right">{formatKzt(line.quantity * item.priceTiyn, lang)}</span>
               </div>
-              <span className="w-24 text-right">{formatKzt(quantity * item.priceTiyn, lang)}</span>
             </li>
           ))}
         </ul>
@@ -335,8 +426,18 @@ function Checkout() {
         </p>
       </section>
 
+      <GroupOrder lines={lines} frozen={frozen} payableTiyn={payable} />
+
+      {nutrition.data && (
+        <div className="mt-4">
+          <NutritionPanel summary={nutrition.data.summary} />
+        </div>
+      )}
+
       <section className="card mt-4" aria-labelledby="bonus-h">
-        <h2 id="bonus-h" className="font-medium">{t('checkout.bonusTitle')}</h2>
+        <h2 id="bonus-h" className="font-medium">
+          {t('checkout.bonusTitle')}
+        </h2>
         <p className="mt-1 text-sm text-stone-600">
           {t('checkout.bonusHave', { points: points(balance), value: formatKzt(pointTiyn, lang) })}{' '}
           {t('checkout.bonusRules', { share: maxSharePercent, earn: earnPercent })}
@@ -348,7 +449,9 @@ function Checkout() {
         ) : (
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <div>
-              <label htmlFor="points" className="label">{t('checkout.bonusUse', { max: maxPoints })}</label>
+              <label htmlFor="points" className="label">
+                {t('checkout.bonusUse', { max: maxPoints })}
+              </label>
               <input
                 id="points"
                 type="number"
@@ -362,7 +465,12 @@ function Checkout() {
                 onChange={(e) => dispatch(setBonusPoints(Math.min(Number(e.target.value), maxPoints)))}
               />
             </div>
-            <button type="button" className="btn-secondary" disabled={frozen} onClick={() => dispatch(setBonusPoints(maxPoints))}>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={frozen}
+              onClick={() => dispatch(setBonusPoints(maxPoints))}
+            >
               {t('checkout.bonusMax')}
             </button>
             {cart.bonusPoints > 0 && (
@@ -376,9 +484,13 @@ function Checkout() {
       </section>
 
       <section className="card mt-4 space-y-4" aria-labelledby="delivery-h">
-        <h2 id="delivery-h" className="font-medium">{t('checkout.delivery')}</h2>
+        <h2 id="delivery-h" className="font-medium">
+          {t('checkout.delivery')}
+        </h2>
         <div>
-          <label htmlFor="address" className="label">{t('checkout.address')}</label>
+          <label htmlFor="address" className="label">
+            {t('checkout.address')}
+          </label>
           <input
             id="address"
             className="input"
@@ -425,7 +537,9 @@ function Checkout() {
           </div>
         </fieldset>
         <div>
-          <label htmlFor="notes" className="label">{t('checkout.notes')}</label>
+          <label htmlFor="notes" className="label">
+            {t('checkout.notes')}
+          </label>
           <textarea
             id="notes"
             rows={2}
@@ -446,9 +560,17 @@ function Checkout() {
           </button>
         </div>
       )}
-      {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-4 text-sm text-red-700">
+          {error}
+        </p>
+      )}
 
-      <button className="btn-primary mt-4 w-full" disabled={create.isLoading || lines.length === 0} onClick={placeOrder}>
+      <button
+        className="btn-primary mt-4 w-full"
+        disabled={create.isLoading || lines.length === 0}
+        onClick={placeOrder}
+      >
         {create.isLoading
           ? t('checkout.savingOrder')
           : draft

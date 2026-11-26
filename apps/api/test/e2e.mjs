@@ -137,11 +137,19 @@ await check('status rules: CONFIRMED -> PENDING and CONFIRMED -> READY are refus
 
 await check('kitchen moves the order forward step by step; a customer cannot', async () => {
   assert.equal((await alice('PATCH', `/orders/${order.id}/status`, { status: 'PREPARING' })).status, 403);
-  for (const status of ['PREPARING', 'READY', 'DELIVERED']) {
+  for (const status of ['PREPARING', 'READY']) {
     const r = await kitchen('PATCH', `/orders/${order.id}/status`, { status });
     assert.equal(r.status, 200, status);
     assert.equal(r.data.order.status, status);
   }
+
+  // The last step is not the kitchen's to take on its own: "delivered" claims
+  // the food reached the customer, so it needs the code only the customer has.
+  const code = (await alice('GET', `/orders/${order.id}`)).data.order.confirmationCode;
+  const delivered = await kitchen('PATCH', `/orders/${order.id}/status`, { status: 'DELIVERED', code });
+  assert.equal(delivered.status, 200, JSON.stringify(delivered.data));
+  assert.equal(delivered.data.order.status, 'DELIVERED');
+
   assert.equal((await kitchen('PATCH', `/orders/${order.id}/status`, { status: 'READY' })).status, 409);
 });
 

@@ -7,6 +7,8 @@ import {
   ValidationError,
   validateAccess,
   validateMenuItem,
+  validateNutrition,
+  validateNutritionPatch,
   validateReorder,
 } from '../domain/validation';
 
@@ -84,24 +86,43 @@ export class AdminService {
     const { rows } = await this.db.pool.query(
       `SELECT m.id, m.name, m.description, m.category, m.price_tiyn AS "priceTiyn",
               m.available, m.sort_order AS "sortOrder",
+              m.calories_kcal AS "caloriesKcal", m.protein_g AS "proteinG",
+              m.fat_g AS "fatG", m.carbs_g AS "carbsG", m.ingredients, m.tags,
               COALESCE(COUNT(i.order_id), 0) AS "timesOrdered"
        FROM menu_items m
        LEFT JOIN order_items i ON i.item_id = m.id
        GROUP BY m.id
        ORDER BY m.sort_order, m.id`,
     );
-    return { items: rows.map((r) => ({ ...r, timesOrdered: Number(r.timesOrdered) })) };
+    return {
+      items: rows.map((r) => ({
+        ...r,
+        timesOrdered: Number(r.timesOrdered),
+        caloriesKcal: r.caloriesKcal === null ? null : Number(r.caloriesKcal),
+        proteinG: r.proteinG === null ? null : Number(r.proteinG),
+        fatG: r.fatG === null ? null : Number(r.fatG),
+        carbsG: r.carbsG === null ? null : Number(r.carbsG),
+      })),
+    };
   }
 
   async createMenuItem(user: AuthUser, body: unknown) {
     const input = validated(() => validateMenuItem(body));
+    const nutrition = validated(() => validateNutrition(body));
     // Two dishes with one name cannot be told apart in an order or a report.
     await this.unique.assertDishNameFree(input.name);
     const { rows } = await this.unique.guard(() => this.db.pool.query(
-      `INSERT INTO menu_items(name, description, category, price_tiyn, available, sort_order)
-       VALUES ($1,$2,$3,$4,$5, COALESCE((SELECT MAX(sort_order) + 1 FROM menu_items), 0))
-       RETURNING id, name, description, category, price_tiyn AS "priceTiyn", available, sort_order AS "sortOrder"`,
-      [input.name, input.description, input.category, input.priceTiyn, input.available],
+      `INSERT INTO menu_items(name, description, category, price_tiyn, available, sort_order,
+                              calories_kcal, protein_g, fat_g, carbs_g, ingredients, tags)
+       VALUES ($1,$2,$3,$4,$5, COALESCE((SELECT MAX(sort_order) + 1 FROM menu_items), 0), $6,$7,$8,$9,$10,$11)
+       RETURNING id, name, description, category, price_tiyn AS "priceTiyn", available, sort_order AS "sortOrder",
+                 calories_kcal AS "caloriesKcal", protein_g AS "proteinG", fat_g AS "fatG", carbs_g AS "carbsG",
+                 ingredients, tags`,
+      [
+        input.name, input.description, input.category, input.priceTiyn, input.available,
+        nutrition.caloriesKcal, nutrition.proteinG, nutrition.fatG, nutrition.carbsG,
+        nutrition.ingredients, nutrition.tags,
+      ],
     ));
     await this.logAction(user, `created dish "${input.name}" (#${rows[0].id})`);
     return { item: { ...rows[0], timesOrdered: 0 } };
@@ -109,13 +130,35 @@ export class AdminService {
 
   async updateMenuItem(user: AuthUser, id: number, body: unknown) {
     const input = validated(() => validateMenuItem(body));
+    // Only the nutrition fields the request actually mentioned. A request that
+    // says nothing about calories must leave the calories alone, not blank them.
+    const nutrition = validated(() => validateNutritionPatch(body));
     // The dish keeping its own name is not a clash, so it is excluded from the check.
     await this.unique.assertDishNameFree(input.name, id);
+
+    const sets = ['name = $2', 'description = $3', 'category = $4', 'price_tiyn = $5', 'available = $6'];
+    const params: unknown[] = [id, input.name, input.description, input.category, input.priceTiyn, input.available];
+    const columns: Record<string, keyof typeof nutrition> = {
+      calories_kcal: 'caloriesKcal',
+      protein_g: 'proteinG',
+      fat_g: 'fatG',
+      carbs_g: 'carbsG',
+      ingredients: 'ingredients',
+      tags: 'tags',
+    };
+    for (const [column, key] of Object.entries(columns)) {
+      if (!(key in nutrition)) continue;
+      params.push(nutrition[key]);
+      sets.push(`${column} = $${params.length}`);
+    }
+
     const { rows } = await this.unique.guard(() => this.db.pool.query(
-      `UPDATE menu_items SET name = $2, description = $3, category = $4, price_tiyn = $5, available = $6
+      `UPDATE menu_items SET ${sets.join(', ')}
        WHERE id = $1
-       RETURNING id, name, description, category, price_tiyn AS "priceTiyn", available, sort_order AS "sortOrder"`,
-      [id, input.name, input.description, input.category, input.priceTiyn, input.available],
+       RETURNING id, name, description, category, price_tiyn AS "priceTiyn", available, sort_order AS "sortOrder",
+                 calories_kcal AS "caloriesKcal", protein_g AS "proteinG", fat_g AS "fatG", carbs_g AS "carbsG",
+                 ingredients, tags`,
+      params,
     ));
     if (!rows[0]) throw new NotFoundException({ code: 'not_found', message: 'This dish was not found.' });
     await this.logAction(user, `edited dish #${id} ("${input.name}", ${input.priceTiyn} tiyn, available=${input.available})`);
@@ -156,7 +199,12 @@ export class AdminService {
   async reorderMenu(user: AuthUser, body: unknown) {
     const ids = validated(() => validateReorder(body));
     const moved = await this.db.tx(async (c) => {
-      const existing = await c.query('SELECT id FROM menu_items WHERE id = ANY($1::int[])', [ids]);
+      // Locked in a fixed order — by id, never by the order being applied.
+      // Two people reordering at once would otherwise take the same rows in
+      // different sequences, each holding what the other needs, and PostgreSQL
+      // would break the tie by killing one of them with a deadlock error. In a
+      // fixed order the second simply waits for the first.
+      const existing = await c.query('SELECT id FROM menu_items WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE', [ids]);
       if (existing.rowCount !== ids.length) {
         throw new BadRequestException({
           code: 'unknown_dish',

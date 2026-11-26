@@ -20,8 +20,8 @@ function psql(sql: string): { ok: boolean; out: string } {
   }
 }
 
-test('schema.sql applies twice without errors (idempotent)', { skip }, () => {
-  const file = fileURLToPath(new URL('../sql/schema.sql', import.meta.url));
+test('the baseline migration applies twice without errors (idempotent)', { skip }, () => {
+  const file = fileURLToPath(new URL('../sql/migrations/001_baseline.sql', import.meta.url));
   assert.ok(readFileSync(file, 'utf8').length > 0);
   for (let i = 0; i < 2; i++) execFileSync('psql', [url as string, '-v', 'ON_ERROR_STOP=1', '-q', '-f', file]);
 });
@@ -248,5 +248,135 @@ test('an address can be blocked only once, and never with a negative failure cou
     assert.equal(psql(`UPDATE blocked_ips SET failures = -1 WHERE ip='${ip}'`).ok, false);
   } finally {
     psql(`DELETE FROM blocked_ips WHERE ip='${ip}'`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Week 4: nutrition, group orders and the delivery code.
+// ---------------------------------------------------------------------------
+
+test('migrations are recorded, and each one only once', { skip }, () => {
+  // The table exists and holds the baseline, which is what lets an existing
+  // database adopt the migration system without being rebuilt.
+  assert.match(psql(`SELECT count(*) FROM schema_migrations`).out, /^[1-9]/);
+  assert.equal(psql(`SELECT count(*) FROM schema_migrations WHERE name = '001_baseline.sql'`).out, '1');
+  // Applying one twice is refused by the primary key, which is what makes
+  // "exactly once" a guarantee rather than an intention.
+  const twice = psql(`INSERT INTO schema_migrations(name, checksum) VALUES ('001_baseline.sql','x')`);
+  assert.equal(twice.ok, false);
+  assert.match(twice.out, /duplicate key|unique/i);
+});
+
+test('nutrition on a dish must be possible, and its labels must be known', { skip }, () => {
+  psql(`DELETE FROM menu_items WHERE name ILIKE 'dbrules nutrition%'`);
+  try {
+    const insert = (columns: string, values: string) =>
+      psql(`INSERT INTO menu_items(name,description,category,price_tiyn,${columns})
+            VALUES ('DbRules nutrition ${Math.random()}','d','c',1000,${values})`);
+
+    assert.equal(insert('calories_kcal', '520').ok, true);
+    assert.equal(insert('calories_kcal', '-1').ok, false, 'a negative calorie count was accepted');
+    assert.equal(insert('calories_kcal', '99999').ok, false, 'an impossible calorie count was accepted');
+    assert.equal(insert('protein_g', '-5').ok, false);
+
+    // Nutrition stays optional: a dish can be added before it is weighed.
+    assert.equal(insert('calories_kcal', 'NULL').ok, true);
+
+    assert.equal(insert('tags', `ARRAY['vegan','halal']::text[]`).ok, true);
+    const madeUp = insert('tags', `ARRAY['delicious']::text[]`);
+    assert.equal(madeUp.ok, false, 'an unknown label was stored');
+    assert.match(madeUp.out, /menu_items_tags_check|violates check/i);
+  } finally {
+    psql(`DELETE FROM menu_items WHERE name ILIKE 'dbrules nutrition%'`);
+  }
+});
+
+test('a group order holds people, and an ordinary one holds none', { skip }, () => {
+  const email = 'dbrules-group@test.local';
+  dropScratch(email);
+  const customer = scratchCustomer(email);
+  try {
+    const order = (attempt: string, extra: string) =>
+      psql(`INSERT INTO orders(customer_id,attempt_id,request_hash,delivery_address,expires_at${extra ? ',' + extra.split('=')[0] : ''})
+            VALUES (${customer},'${attempt}','h','addr',now()${extra ? ',' + extra.split('=')[1] : ''})`);
+
+    // An ordinary order: no people, and that is consistent.
+    assert.equal(order('grp-plain', '').ok, true);
+
+    // A group order with people in it.
+    assert.equal(
+      psql(`INSERT INTO orders(customer_id,attempt_id,request_hash,delivery_address,expires_at,is_group,participants)
+            VALUES (${customer},'grp-ok','h','addr',now(),TRUE,ARRAY['Alice','Bob'])`).ok,
+      true,
+    );
+
+    // A group order with nobody in it, and an ordinary order with people in it,
+    // are both states the application can never mean.
+    const emptyGroup = psql(`INSERT INTO orders(customer_id,attempt_id,request_hash,delivery_address,expires_at,is_group,participants)
+                             VALUES (${customer},'grp-empty','h','addr',now(),TRUE,ARRAY[]::text[])`);
+    assert.equal(emptyGroup.ok, false, 'a group order with no people was accepted');
+    assert.match(emptyGroup.out, /orders_group_check|violates check/i);
+
+    const peopleWithoutGroup = psql(`INSERT INTO orders(customer_id,attempt_id,request_hash,delivery_address,expires_at,is_group,participants)
+                                     VALUES (${customer},'grp-stray','h','addr',now(),FALSE,ARRAY['Alice'])`);
+    assert.equal(peopleWithoutGroup.ok, false);
+  } finally {
+    dropScratch(email);
+  }
+});
+
+test('the same dish for two people is two rows; for one person it is one', { skip }, () => {
+  const email = 'dbrules-items@test.local';
+  dropScratch(email);
+  const customer = scratchCustomer(email);
+  try {
+    psql(`INSERT INTO orders(customer_id,attempt_id,request_hash,delivery_address,expires_at,is_group,participants)
+          VALUES (${customer},'items-1','h','addr',now(),TRUE,ARRAY['Alice','Bob'])`);
+    const orderId = psql(`SELECT id FROM orders WHERE attempt_id='items-1'`).out;
+    const dishId = psql(`SELECT id FROM menu_items ORDER BY id LIMIT 1`).out;
+
+    const line = (participant: string) =>
+      psql(`INSERT INTO order_items(order_id,item_id,quantity,unit_price_tiyn,participant)
+            VALUES (${orderId},${dishId},1,1000,'${participant}')`);
+
+    // The key is (order, dish, person), so the same dish for two people is fine…
+    assert.equal(line('Alice').ok, true);
+    assert.equal(line('Bob').ok, true);
+    // …and the same dish for the same person twice is not: that is one line
+    // with a quantity of two.
+    const again = line('Alice');
+    assert.equal(again.ok, false, 'the same dish was listed twice for one person');
+    assert.match(again.out, /duplicate key|unique/i);
+  } finally {
+    dropScratch(email);
+  }
+});
+
+test('a delivery code is four digits or nothing at all', { skip }, () => {
+  const email = 'dbrules-code@test.local';
+  dropScratch(email);
+  const customer = scratchCustomer(email);
+  try {
+    // The label is separate from the value: a code is written with quotes around
+    // it, and folding those into the attempt id would break the statement rather
+    // than test the constraint.
+    let attempt = 0;
+    const withCode = (code: string) =>
+      psql(`INSERT INTO orders(customer_id,attempt_id,request_hash,delivery_address,expires_at,confirmation_code)
+            VALUES (${customer},'code-${attempt++}','h','addr',now(),${code})`);
+
+    assert.equal(withCode(`'0427'`).ok, true);
+    assert.equal(withCode('NULL').ok, true, 'an order with no code yet was refused');
+    assert.equal(withCode(`'42'`).ok, false, 'a two-digit code was accepted');
+    assert.equal(withCode(`'12345'`).ok, false);
+    assert.equal(withCode(`'12a4'`).ok, false);
+
+    // Guesses are counted, and the count cannot be talked backwards.
+    psql(`INSERT INTO orders(customer_id,attempt_id,request_hash,delivery_address,expires_at)
+          VALUES (${customer},'code-attempts','h','addr',now())`);
+    assert.equal(psql(`UPDATE orders SET confirmation_attempts = -1 WHERE attempt_id='code-attempts'`).ok, false);
+    assert.equal(psql(`UPDATE orders SET confirmation_attempts = 3 WHERE attempt_id='code-attempts'`).ok, true);
+  } finally {
+    dropScratch(email);
   }
 });

@@ -1,5 +1,6 @@
 import { BadRequestException, Controller, Get, Header, Param, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard';
+import { ValidationError, validateChartQuery } from '../domain/validation';
 import { Roles } from '../auth/roles.decorator';
 import { ReportViewsService } from './report-views.service';
 import { ReportsService } from './reports.service';
@@ -39,6 +40,22 @@ export class ReportsController {
   @Get('dishes')
   dishes(@Query('from') from?: string, @Query('to') to?: string) {
     return this.views.dishes(from, to);
+  }
+
+  /**
+   * The series behind the chart on the accounting page.
+   *
+   * Separate from the daily report because a chart and a table want different
+   * things: the table leaves out days with no trade, the chart must not.
+   */
+  @Get('chart')
+  chart(@Query() query: Record<string, string>) {
+    try {
+      return this.views.chart(validateChartQuery(query));
+    } catch (e) {
+      if (e instanceof ValidationError) throw new BadRequestException({ code: e.code, message: e.message });
+      throw e;
+    }
   }
 
   /** Who orders, how often, how happy. */

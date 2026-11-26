@@ -1,12 +1,14 @@
 # Food Delivery System — Requirements Report
 
 **Project:** Food Delivery System (one restaurant, synthetic data, simulated payments)
-**Report date:** 19 November 2026
+**Report date:** 27 November 2026
 **Scope of this report:** the full requirement set, what is implemented, and how each requirement was
 verified. It covers the first delivery (ordering, payment simulation, roles, accounting), the second
 (drag and drop, bonus points, feedback, admin panel, sign-in security) and the third (languages, mobile
 layout, profile, password reset, blocking by address, history search, repeat ordering, the newer
-reports, uniqueness and deployment).
+reports, uniqueness and deployment) and the fourth (dish search by nutrition, health information,
+group orders, the order page, delivery confirmation, the accounting chart, the dark theme, skeletons
+and placeholders, and SQL migrations).
 
 ---
 
@@ -262,6 +264,102 @@ pure rules, "DB" a test against a real PostgreSQL, "E2E" a check over HTTP again
 | FR-122 | Shutdown lets the requests in flight finish | `enableShutdownHooks` | code review |
 | FR-123 | The whole system runs as three containers, with only the website published | `docker-compose.prod.yml` | compose validation |
 
+### 3.19 Finding a dish *(fourth delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-124 | A dish carries calories, protein, fat, carbohydrate, its ingredients and a set of labels | `002_nutrition.sql`, `menu.controller.ts` | DB, E2E |
+| FR-125 | The menu can be searched by what is in a dish, including its ingredients | `menu.controller.ts` | E2E |
+| FR-126 | The menu can be filtered by a calorie limit and by a budget | same | E2E |
+| FR-127 | Labels can be required and excluded, and a contradiction is refused | `validateDishFilter` | Unit, E2E |
+| FR-128 | A dish with no figures is not hidden by a calorie filter | `menu.controller.ts` | code review, E2E |
+| FR-129 | A dish with no labels **is** hidden by an exclusion, because a missing label is not proof | same | E2E |
+| FR-130 | The menu can be sorted by price or by calories | same | E2E |
+| FR-131 | Filtering happens in SQL, not in the browser | same | code review |
+
+### 3.20 Health information *(fourth delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-132 | A basket of dishes adds up to totals and an energy split | `domain/nutrition.ts` | Unit, E2E |
+| FR-133 | A dish nobody has measured is counted apart, never as zero | same | Unit |
+| FR-134 | The energy split is derived from the macronutrients and always adds to 100 | same | Unit |
+| FR-135 | The order is placed against a 2000 kcal reference day | same | Unit, E2E |
+| FR-136 | Advice arrives as a key and its numbers, so the wording lives in the dictionary | same | Unit |
+| FR-137 | Every figure carries the note that it is not advice for a particular person | `NutritionPanel.tsx` | manual |
+| FR-138 | The figures come from the database, never from the browser | `nutrition.controller.ts` | code review |
+
+### 3.21 Group orders *(fourth delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-139 | One order can be shared between two to ten people | `validateParticipants` | Unit, E2E |
+| FR-140 | Each dish is assigned to one of them, and the bill is split accordingly | `orders.service.ts` | E2E |
+| FR-141 | The same dish for two people is two lines, not one | `003_group_orders.sql` (primary key) | DB, Unit, E2E |
+| FR-142 | Two people cannot share a name, whatever the capitalisation | `validateParticipants` | Unit, E2E |
+| FR-143 | The split is shown while the order is being built, not after it is placed | `GroupOrder.tsx` | manual |
+| FR-144 | Bonus points are not split: they belong to whoever placed the order | `orders.service.ts` | code review |
+| FR-145 | The people are part of the order fingerprint | `validation.ts` | Unit |
+| FR-146 | The kitchen sees the names, because they go on the boxes, but no money | `present()` | E2E |
+
+### 3.22 Delivery confirmation *(fourth delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-147 | An approved payment issues a four-digit code | `orders.service.ts` | E2E |
+| FR-148 | Only the customer can read it | `present()` | E2E |
+| FR-149 | An order cannot be marked delivered without it | `checkHandover` | E2E |
+| FR-150 | Wrong codes are counted and run out after five | same | E2E |
+| FR-151 | A wrong guess is recorded even though the attempt failed | same (counted inside the transaction) | E2E |
+| FR-152 | The moment of handover is recorded | `orders.confirmed_at` | E2E |
+
+### 3.23 The accounting chart *(fourth delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-153 | One measure over time, grouped by day, week or month | `report-views.service.ts` | E2E |
+| FR-154 | A bucket with no trade is a zero in the line, not a missing point | same | E2E |
+| FR-155 | An average with nothing to average has no value, not a zero | same | E2E |
+| FR-156 | The chart agrees with the reports drawn from the same data | same | E2E |
+| FR-157 | The axis starts at zero | `TrendChart.tsx` | code review |
+| FR-158 | The line colour is chosen per theme and validated against that theme's surface | `globals.css` | palette validator |
+| FR-159 | The chart has a hover readout and a table view | `TrendChart.tsx` | manual |
+| FR-160 | Only the ends and the peak are labelled | same | manual |
+
+### 3.24 Dark theme, skeletons and placeholders *(fourth delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-161 | The site reads in a light theme, a dark theme, or whatever the system is set to | `ThemeProvider.tsx` | manual |
+| FR-162 | The theme is applied before the first paint, with no flash of the wrong one | inline script in `layout.tsx` | manual |
+| FR-163 | Colours are roles rather than shades, so pages need no second set of classes | `globals.css`, `tailwind.config.ts` | code review |
+| FR-164 | Each loading state matches the shape of what is coming | `Skeleton.tsx` | manual |
+| FR-165 | Skeletons are announced once, in words, not read out as shapes | same | code review |
+| FR-166 | "Nothing yet", "nothing matches" and "something broke" are three different screens | `EmptyState.tsx` | manual |
+| FR-167 | An unknown address shows a 404 page with a way out | `not-found.tsx` | E2E (HTTP status), manual |
+| FR-168 | An unexpected error offers to try again | `error.tsx` | manual |
+
+### 3.25 After the order *(fourth delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-169 | Each order has its own page, reachable from the history and from the checkout | `orders/[id]/page.tsx` | manual |
+| FR-170 | It shows how far the order has got, step by step | same | manual |
+| FR-171 | It shows the delivery code, the split and the nutrition in one place | same | manual |
+| FR-172 | It refreshes on its own while the order is being prepared | same | manual |
+
+### 3.26 Migrations *(fourth delivery)*
+
+| ID | Requirement | Where | Verified |
+|---|---|---|---|
+| FR-173 | Schema changes are numbered files applied in order, exactly once each | `db/migrate.ts` | Unit, DB |
+| FR-174 | Each one runs in its own transaction, so a failure leaves nothing behind | same | code review |
+| FR-175 | An applied migration that has been edited is an error, not a silent re-run | `planMigrations` | Unit |
+| FR-176 | A line-ending difference is not an edit | `checksumOf` | Unit |
+| FR-177 | An existing database adopts the system without being rebuilt | `001_baseline.sql` | manual (applied to the live database) |
+| FR-178 | A migration recorded but missing from disk is reported | `planMigrations` | Unit |
+| FR-179 | Migrations can be applied without starting the server | `npm run db:migrate` | manual |
+
 ## 4. Non-functional requirements
 
 | ID | Requirement | How it is met |
@@ -280,13 +378,15 @@ pure rules, "DB" a test against a real PostgreSQL, "E2E" a check over HTTP again
 | NFR-12 | Session invalidation does not depend on a clock | Every token carries the account’s session generation; changing a password raises it, so old tokens are refused exactly, with no window |
 | NFR-13 | Reading whether the service is alive needs no secret | The health endpoints are public and reveal no data, because the monitor checking them has no password |
 | NFR-14 | Translations cannot drift apart | English defines the type, so a missing key fails the build; tests compare keys, emptiness and placeholders across all three |
+| NFR-16 | Concurrent requests cannot break an invariant | Rows are locked in a fixed order; counters that must survive a refusal share the transaction that refuses; a set of end-to-end checks fires the same request several times at once |
+| NFR-17 | An update changes only what it mentions | A PATCH that says nothing about a field leaves it alone; only an explicit null clears it |
 | NFR-15 | Every rule that matters is enforced twice | Uniqueness in the service and in an index; the password rule in the browser meter and on the server; the address limit in the sign-in path and in the journal |
 
 ---
 
 ## 5. Data model
 
-Thirteen tables:
+Fourteen tables:
 
 | Table | Holds |
 |---|---|
@@ -303,6 +403,7 @@ Thirteen tables:
 | `security_events` | The security journal |
 | `password_resets` | Reset links, stored as hashes, with their expiry and whether they were used |
 | `blocked_ips` | Addresses blocked automatically or by hand |
+| `schema_migrations` | Which schema changes have been applied, and the checksum of each |
 
 ---
 
@@ -328,9 +429,17 @@ Thirteen tables:
 | The newer reports | 7 | 7 | 7 |
 | Uniqueness | 5 | 5 | 3 |
 | Running on a server | 8 | 8 | 3 |
-| **Total** | **123** | **123** | **98** |
+| Finding a dish | 8 | 8 | 7 |
+| Health information | 7 | 7 | 5 |
+| Group orders | 8 | 8 | 6 |
+| Delivery confirmation | 6 | 6 | 6 |
+| The accounting chart | 8 | 8 | 4 |
+| Theme and placeholders | 8 | 8 | 1 |
+| After the order | 4 | 4 | 0 |
+| Migrations | 7 | 7 | 5 |
+| **Total** | **179** | **179** | **132** |
 
-Twenty-five requirements have no direct automated test. They fall into three kinds, and none of them is
+Forty-seven requirements have no direct automated test. They fall into three kinds, and none of them is
 untested by accident:
 
 - **The shape of the code is the evidence.** The cookie flags, the order of the checks in the sign-in
@@ -348,12 +457,14 @@ untested by accident:
 
 | Criterion | Assessment | Reasoning |
 |---|---|---|
-| Completeness against the plan | **Full** | Every item planned for the three deliveries is implemented and running. The third added languages, a mobile layout, the profile, password reset and change, blocking by address, history search, repeat ordering, three reports, uniqueness rules and a deployment |
-| Correctness | **High** | 154 automated checks pass: 65 unit, 12 against a real PostgreSQL, 77 over HTTP. The 42 checks written for the earlier deliveries still pass unchanged, so nothing was broken on the way |
+| Completeness against the plan | **Full** | Every item planned for the four deliveries is implemented and running. The fourth added the dish search by nutrition, health information, group orders, the order page, delivery confirmation, the accounting chart, the dark theme, skeletons and placeholders, and SQL migrations |
+| Correctness | **High** | 219 automated checks pass: 93 unit, 17 against a real PostgreSQL, 109 over HTTP. The fourth delivery’s checks found three real faults — a deadlock, a crash under concurrent writes, and an update that erased data — all fixed and guarded |
 | Defence in depth | **High** | Every rule that matters is enforced at more than one level: the status graph and the feedback rule in both the service and the database; uniqueness in both the service (for the message) and an index (for the guarantee); the password rule in both the browser meter and the server; the limits on sign-in against both the account and the address |
 | Data integrity | **High** | Constraints, triggers and unique indexes refuse bad data even when it arrives by direct SQL; money stays in whole tiyn, points can never fall below zero, and a migration that existing rows would break reports the problem rather than rewriting them |
 | Security | **Good for a prototype** | Passwords are hashed and judged against the owner's own details; reset links are stored only as hashes, last 30 minutes and work once; session invalidation is exact rather than clock-based; sign-in is limited per account and per address, and every refusal is journalled |
 | Usability | **Good** | Three languages with no untranslated gaps, a layout that works on a phone, every drag backed by a button, and errors written as sentences in the reader's language |
 | Readiness for public use | **Closer, still not ready** | Deployment, health checks, configuration validation and security headers are in place. Still missing: HTTPS in front of the site, a real mail server for reset links, and an external security review. The payment step remains a simulation |
 
-**Overall: the requirements set for all three stages is met in full, and verified.**
+| Behaviour under concurrency | **Good** | Nine end-to-end checks fire the same request several times at once: duplicate orders, double payments, double spending of points, racing deliveries, racing registrations and racing menu edits all resolve to exactly one effect |
+
+**Overall: the requirements set for all four stages is met in full, and verified.**

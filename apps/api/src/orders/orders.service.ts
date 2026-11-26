@@ -10,10 +10,12 @@ import { PoolClient } from 'pg';
 import { AuthUser } from '../auth/types';
 import { DbService } from '../db/db.service';
 import { POINT_TIYN, applicablePoints, maxRedeemablePoints, pointsEarned } from '../domain/bonus';
+import { summarise } from '../domain/nutrition';
 import { KITCHEN_VISIBLE, OrderStatus, isKitchenStep, isOrderStatus } from '../domain/status';
 import {
   ValidationError,
   digitsOnly,
+  validateConfirmationCode,
   validateFeedback,
   validateHistoryFilter,
   validateOrderInput,
@@ -21,6 +23,9 @@ import {
 } from '../domain/validation';
 
 const CHECKOUT_SECONDS = 120;
+
+/** Wrong delivery codes allowed before an order can only be closed by an administrator. */
+const MAX_CONFIRMATION_ATTEMPTS = 5;
 
 interface OrderRow {
   id: number;
@@ -34,7 +39,22 @@ interface OrderRow {
   bonus_requested: number;
   bonus_spent: number;
   bonus_earned: number;
-  items: { itemId: number; name: string; quantity: number; unitPriceTiyn: number }[];
+  is_group: boolean;
+  participants: string[];
+  confirmation_code: string | null;
+  confirmation_attempts: number;
+  confirmed_at: Date | null;
+  items: {
+    itemId: number;
+    name: string;
+    quantity: number;
+    unitPriceTiyn: number;
+    participant: string;
+    caloriesKcal: number | null;
+    proteinG: number | null;
+    fatG: number | null;
+    carbsG: number | null;
+  }[];
   feedback: { rating: number; comment: string; reply: string; createdAt: string } | null;
 }
 
@@ -190,8 +210,9 @@ export class OrdersService {
 
     const { orderId, replayed } = await this.db.tx(async (c) => {
       const inserted = await c.query(
-        `INSERT INTO orders(customer_id, attempt_id, request_hash, delivery_address, delivery_time, notes, bonus_requested, expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7, now() + make_interval(secs => $8))
+        `INSERT INTO orders(customer_id, attempt_id, request_hash, delivery_address, delivery_time, notes,
+                            bonus_requested, is_group, participants, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now() + make_interval(secs => $10))
          ON CONFLICT (customer_id, attempt_id) DO NOTHING
          RETURNING id`,
         [
@@ -202,6 +223,8 @@ export class OrdersService {
           input.deliveryTime,
           input.notes,
           input.bonusPoints,
+          input.participants.length > 0,
+          input.participants,
           CHECKOUT_SECONDS,
         ],
       );
@@ -220,11 +243,16 @@ export class OrdersService {
       }
       const id: number = inserted.rows[0].id;
       const items = await c.query(
-        `INSERT INTO order_items(order_id, item_id, quantity, unit_price_tiyn)
-         SELECT $1, m.id, l.quantity, m.price_tiyn
-         FROM unnest($2::int[], $3::int[]) AS l(item_id, quantity)
+        `INSERT INTO order_items(order_id, item_id, quantity, unit_price_tiyn, participant)
+         SELECT $1, m.id, l.quantity, m.price_tiyn, l.participant
+         FROM unnest($2::int[], $3::int[], $4::text[]) AS l(item_id, quantity, participant)
          JOIN menu_items m ON m.id = l.item_id AND m.available`,
-        [id, input.lines.map((l) => l.itemId), input.lines.map((l) => l.quantity)],
+        [
+          id,
+          input.lines.map((l) => l.itemId),
+          input.lines.map((l) => l.quantity),
+          input.lines.map((l) => l.participant),
+        ],
       );
       if (items.rowCount !== input.lines.length) {
         // Throwing rolls the whole transaction back: no half-saved order.
@@ -320,7 +348,17 @@ export class OrdersService {
         payment,
         payable,
       ]);
-      await c.query('UPDATE orders SET status = $2 WHERE id = $1', [orderId, status]);
+      if (status === 'CONFIRMED') {
+        // The delivery code is issued the moment a delivery becomes real, and
+        // generated in the database so it never passes through this process.
+        await c.query(
+          `UPDATE orders SET status = $2, confirmation_code = lpad((floor(random() * 10000))::int::text, 4, '0')
+           WHERE id = $1`,
+          [orderId, status],
+        );
+      } else {
+        await c.query('UPDATE orders SET status = $2 WHERE id = $1', [orderId, status]);
+      }
       await this.event(c, orderId, 'PENDING', status, user.id);
       return { replayed: false, status };
     });
@@ -338,11 +376,21 @@ export class OrdersService {
 
   // --------------------------------------------------------------- status
 
-  /** Kitchen moves an order one step forward: CONFIRMED -> PREPARING -> READY -> DELIVERED. */
-  async changeStatus(user: AuthUser, orderId: number, target: unknown) {
+  /**
+   * Kitchen moves an order one step forward: CONFIRMED -> PREPARING -> READY -> DELIVERED.
+   *
+   * The last step is different from the others. "Delivered" is not a statement
+   * about the kitchen's work, it is a claim that the food reached the person who
+   * paid for it, and the kitchen is not in a position to know that. So that step
+   * needs the four-digit code the customer reads out at the door.
+   */
+  async changeStatus(user: AuthUser, orderId: number, target: unknown, body?: unknown) {
     try {
-      await this.db.tx(async (c) => {
-        const found = await c.query('SELECT status FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
+      const refused = await this.db.tx(async (c) => {
+        const found = await c.query(
+          'SELECT status, confirmation_code, confirmation_attempts FROM orders WHERE id = $1 FOR UPDATE',
+          [orderId],
+        );
         const current: OrderStatus | undefined = found.rows[0]?.status;
         if (!current) throw new NotFoundException({ code: 'not_found', message: 'This order was not found.' });
         if (!KITCHEN_VISIBLE.includes(current)) {
@@ -354,9 +402,30 @@ export class OrdersService {
             message: 'A status can only move to the next step: Confirmed, Preparing, Ready, Delivered.',
           });
         }
-        await c.query('UPDATE orders SET status = $2 WHERE id = $1', [orderId, target]);
+
+        if (target === 'DELIVERED') {
+          const refusal = await this.checkHandover(c, orderId, found.rows[0], body);
+          if (refusal) {
+            // Returned rather than thrown: throwing here would roll the
+            // transaction back, and the count of wrong guesses has to survive.
+            // The caller turns this into the error, after the commit.
+            return refusal;
+          }
+          await c.query('UPDATE orders SET status = $2, confirmed_at = now() WHERE id = $1', [orderId, target]);
+        } else {
+          await c.query('UPDATE orders SET status = $2 WHERE id = $1', [orderId, target]);
+        }
         await this.event(c, orderId, current, target as OrderStatus, user.id);
+        return null;
       });
+
+      if (refused) {
+        throw new ConflictException({
+          code: 'bad_confirmation_code',
+          message: refused.message,
+          attemptsLeft: refused.attemptsLeft,
+        });
+      }
     } catch (e) {
       // Second line of defence: the database trigger refuses any illegal change too.
       const err = e as { code?: string; message?: string };
@@ -488,8 +557,13 @@ export class OrdersService {
     const { rows } = await this.db.pool.query(
       `SELECT o.id, o.attempt_id, o.status, o.delivery_address, o.delivery_time, o.notes, o.created_at, o.expires_at,
               o.bonus_requested, o.bonus_spent, o.bonus_earned,
-              COALESCE(json_agg(json_build_object('itemId', i.item_id, 'name', m.name, 'quantity', i.quantity, 'unitPriceTiyn', i.unit_price_tiyn)
-                               ORDER BY i.item_id) FILTER (WHERE i.item_id IS NOT NULL), '[]') AS items,
+              o.is_group, o.participants, o.confirmation_code, o.confirmation_attempts, o.confirmed_at,
+              COALESCE(json_agg(json_build_object(
+                        'itemId', i.item_id, 'name', m.name, 'quantity', i.quantity,
+                        'unitPriceTiyn', i.unit_price_tiyn, 'participant', i.participant,
+                        'caloriesKcal', m.calories_kcal, 'proteinG', m.protein_g,
+                        'fatG', m.fat_g, 'carbsG', m.carbs_g)
+                               ORDER BY i.item_id, i.participant) FILTER (WHERE i.item_id IS NOT NULL), '[]') AS items,
               CASE WHEN f.id IS NULL THEN NULL
                    ELSE json_build_object('rating', f.rating, 'comment', f.comment, 'reply', f.reply, 'createdAt', f.created_at)
               END AS feedback
@@ -517,11 +591,25 @@ export class OrdersService {
       itemCount,
     };
     if (user.role === 'KITCHEN') {
-      // Preparation details only: no prices, no customer address, no money of any kind.
+      // Preparation details only: no prices, no customer address, no money of any
+      // kind. The names in a group order are the exception: they are what the
+      // packer writes on each box, and they carry no money with them.
       return {
         ...base,
         notes: row.notes,
-        items: row.items.map(({ itemId, name, quantity }) => ({ itemId, name, quantity })),
+        isGroup: row.is_group,
+        participants: row.participants ?? [],
+        items: row.items.map(({ itemId, name, quantity, participant }) => ({
+          itemId,
+          name,
+          quantity,
+          participant,
+        })),
+        // Whether a code is still owed, never the code itself: the kitchen is the
+        // side that has to be told it, and a kitchen that can read it could close
+        // an order without ever handing the food over.
+        needsConfirmation: row.status === 'READY',
+        confirmationAttempts: row.confirmation_attempts,
       };
     }
     const totalTiyn = row.items.reduce((sum, i) => sum + i.quantity * i.unitPriceTiyn, 0);
@@ -529,6 +617,7 @@ export class OrdersService {
     // afterwards show what was really taken.
     const pointsApplied = row.status === 'PENDING' ? row.bonus_requested : row.bonus_spent;
     const discountTiyn = pointsApplied * POINT_TIYN;
+    const payableTiyn = Math.max(0, totalTiyn - discountTiyn);
     return {
       ...base,
       attemptId: row.attempt_id,
@@ -539,9 +628,109 @@ export class OrdersService {
       bonusSpent: row.bonus_spent,
       bonusEarned: row.bonus_earned,
       discountTiyn,
-      payableTiyn: Math.max(0, totalTiyn - discountTiyn),
+      payableTiyn,
       items: row.items,
       feedback: row.feedback,
+      isGroup: row.is_group,
+      participants: row.participants ?? [],
+      split: this.splitBetween(row, payableTiyn),
+      nutrition: summarise(
+        row.items.map((i) => ({
+          quantity: i.quantity,
+          caloriesKcal: i.caloriesKcal === null ? null : Number(i.caloriesKcal),
+          proteinG: i.proteinG === null ? null : Number(i.proteinG),
+          fatG: i.fatG === null ? null : Number(i.fatG),
+          carbsG: i.carbsG === null ? null : Number(i.carbsG),
+        })),
+      ),
+      // The customer is the only one who sees the code, which is what makes it
+      // worth anything at the door.
+      confirmationCode: row.confirmation_code,
+      confirmedAt: row.confirmed_at,
+    };
+  }
+
+  /**
+   * The handover: the courier types the code the customer read out.
+   *
+   * Guesses are counted and run out. Four digits is ten thousand possibilities,
+   * which is plenty for a person at a door and nothing at all for a loop, so the
+   * limit — not the length — is what makes the code mean anything.
+   *
+   * Returns `null` when the code is right, or the refusal to raise once the
+   * transaction has committed. It must not throw on a wrong code: the enclosing
+   * transaction holds `FOR UPDATE` on this order, so the wrong guess has to be
+   * counted on that same connection, and a throw would roll the count back with
+   * everything else. Counting it on a second connection instead would wait on a
+   * lock the caller itself is holding, and wait for ever.
+   */
+  private async checkHandover(
+    c: PoolClient,
+    orderId: number,
+    row: { confirmation_code: string | null; confirmation_attempts: number },
+    body: unknown,
+  ): Promise<{ message: string; attemptsLeft: number } | null> {
+    if (!row.confirmation_code) {
+      // An order from before this rule existed, or one whose code was never
+      // issued. Refusing it outright would strand it, so it closes as it used to.
+      return null;
+    }
+    if (row.confirmation_attempts >= MAX_CONFIRMATION_ATTEMPTS) {
+      throw new ForbiddenException({
+        code: 'confirmation_locked',
+        message: 'Too many wrong codes for this order. An administrator has to look at it.',
+      });
+    }
+
+    // Throws a 400 on its own: nothing has been written yet, so rolling back
+    // here costs nothing.
+    const given = validated(() => validateConfirmationCode(body));
+    if (given === row.confirmation_code) return null;
+
+    await c.query('UPDATE orders SET confirmation_attempts = confirmation_attempts + 1 WHERE id = $1', [orderId]);
+    const left = MAX_CONFIRMATION_ATTEMPTS - (row.confirmation_attempts + 1);
+    return {
+      message:
+        left > 0
+          ? `That code does not match this order. ${left} attempt${left === 1 ? '' : 's'} left.`
+          : 'That code does not match this order, and there are no attempts left.',
+      attemptsLeft: Math.max(0, left),
+    };
+  }
+
+  /**
+   * Who owes what in a group order.
+   *
+   * Each person pays for their own dishes. The discount from bonus points
+   * belongs to the customer who placed the order, not to the table, so it is
+   * shown separately rather than spread across people who did not earn it.
+   */
+  private splitBetween(row: OrderRow, payableTiyn: number) {
+    if (!row.is_group) return null;
+    const people = new Map<string, { name: string; itemCount: number; totalTiyn: number }>();
+    for (const name of row.participants ?? []) {
+      people.set(name, { name, itemCount: 0, totalTiyn: 0 });
+    }
+    let unassignedTiyn = 0;
+    for (const item of row.items) {
+      const amount = item.quantity * item.unitPriceTiyn;
+      const person = item.participant ? people.get(item.participant) : undefined;
+      if (!person) {
+        // A line for nobody, or for someone no longer in the order: shown apart
+        // rather than quietly added to the first person on the list.
+        unassignedTiyn += amount;
+        continue;
+      }
+      person.itemCount += item.quantity;
+      person.totalTiyn += amount;
+    }
+    const shares = [...people.values()];
+    return {
+      shares,
+      unassignedTiyn,
+      // What the person who placed the order actually pays after the discount.
+      payableTiyn,
+      discountNote: payableTiyn !== shares.reduce((sum, p) => sum + p.totalTiyn, 0) + unassignedTiyn,
     };
   }
 

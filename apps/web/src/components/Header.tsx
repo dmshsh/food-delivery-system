@@ -4,11 +4,13 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import LanguageSwitch from '@/i18n/LanguageSwitch';
+import ThemeSwitch from './ThemeSwitch';
 import { useT } from '@/i18n/I18nProvider';
 import { roleKey } from '@/lib/format';
 import type { MessageKey } from '@/i18n/dictionaries';
 import { api, useLogoutMutation } from '@/store/api';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { cartCount } from '@/store/cartSlice';
 import { useSession } from './useSession';
 
 /**
@@ -27,7 +29,7 @@ export default function Header() {
   const t = useT();
   const [logout] = useLogoutMutation();
   const [open, setOpen] = useState(false);
-  const cartCount = useAppSelector((s) => Object.values(s.cart.quantities).reduce((a, b) => a + b, 0));
+  const count = useAppSelector((s) => cartCount(s.cart));
 
   // Moving to another page closes the panel; leaving it open over the new page
   // would hide the thing the person just asked for.
@@ -35,7 +37,7 @@ export default function Header() {
 
   const links: { href: string; label: string }[] = [{ href: '/', label: t('nav.menu') }];
   if (!user || user.role === 'CUSTOMER') {
-    links.push({ href: '/checkout', label: cartCount ? `${t('nav.checkout')} (${cartCount})` : t('nav.checkout') });
+    links.push({ href: '/checkout', label: count ? `${t('nav.checkout')} (${count})` : t('nav.checkout') });
   }
   if (user?.role === 'CUSTOMER') {
     links.push({ href: '/orders', label: t('nav.orders') });
@@ -95,6 +97,7 @@ export default function Header() {
               {t('nav.pointsBadge', { count: profile.bonusPoints })}
             </Link>
           )}
+          <ThemeSwitch className="hidden sm:inline-flex" />
           <LanguageSwitch className="hidden sm:flex" />
           {user ? (
             <>
@@ -156,6 +159,7 @@ export default function Header() {
                 {t('nav.pointsBadge', { count: profile.bonusPoints })}
               </Link>
             )}
+            <ThemeSwitch />
             <LanguageSwitch className="sm:hidden" />
             {user ? (
               <>

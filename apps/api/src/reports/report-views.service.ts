@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DbService } from '../db/db.service';
 import { OrdersService } from '../orders/orders.service';
+import type { ChartQuery } from '../domain/validation';
 
 /**
  * The three reports added for the second stage of the accounting work.
@@ -180,6 +181,110 @@ export class ReportViewsService {
         averagePerCustomerTiyn: active.length
           ? Math.round(active.reduce((sum, c) => sum + c.paidTiyn, 0) / active.length)
           : 0,
+      },
+    };
+  }
+
+
+  /**
+   * One line for a chart: a metric over time, in equal buckets.
+   *
+   * Two things make this different from the daily report, which already returns
+   * numbers per day.
+   *
+   * First, a chart must not skip empty buckets. The daily report leaves out days
+   * with no trade, which is right for a table and wrong for a line: a quiet
+   * Sunday between two busy days has to appear as a dip, not vanish and make
+   * Monday look adjacent to Saturday. So the range is generated first and the
+   * takings are joined onto it.
+   *
+   * Second, a chart needs a range even when nothing was asked for. Without one
+   * the series would start at the first order ever placed and the interesting
+   * part would be a few pixels wide, so it defaults to the last 30 days.
+   */
+  async chart(query: ChartQuery) {
+    await this.orders.expirePending();
+
+    const to = query.to ?? new Date();
+    const from = query.from ?? new Date(to.getTime() - 29 * 24 * 3600 * 1000);
+
+    // generate_series builds the buckets; the orders are joined onto them, so a
+    // bucket with no trade is a zero rather than a missing point.
+    const { rows } = await this.db.pool.query(
+      `WITH buckets AS (
+         SELECT generate_series(
+           date_trunc($3, $1::timestamptz),
+           date_trunc($3, $2::timestamptz),
+           ('1 ' || $3)::interval
+         ) AS bucket
+       ),
+       paid AS (
+         SELECT date_trunc($3, o.created_at) AS bucket,
+                COALESCE(SUM(p.amount_tiyn), 0) AS paid_tiyn,
+                COUNT(DISTINCT o.id)            AS orders,
+                COUNT(DISTINCT o.customer_id)   AS customers
+         FROM orders o
+         JOIN payment_attempts p ON p.order_id = o.id AND p.outcome = 'APPROVED'
+         WHERE o.created_at >= date_trunc($3, $1::timestamptz)
+           AND o.created_at < date_trunc($3, $2::timestamptz) + ('1 ' || $3)::interval
+         GROUP BY 1
+       )
+       SELECT to_char(b.bucket, 'YYYY-MM-DD')     AS bucket,
+              COALESCE(p.paid_tiyn, 0)            AS "paidTiyn",
+              COALESCE(p.orders, 0)               AS orders,
+              COALESCE(p.customers, 0)            AS customers
+       FROM buckets b
+       LEFT JOIN paid p ON p.bucket = b.bucket
+       ORDER BY b.bucket`,
+      [from, to, query.bucket],
+    );
+
+    const points = rows.map((r) => {
+      const paidTiyn = Number(r.paidTiyn);
+      const orders = Number(r.orders);
+      const value =
+        query.metric === 'revenue'
+          ? paidTiyn
+          : query.metric === 'orders'
+            ? orders
+            : query.metric === 'customers'
+              ? Number(r.customers)
+              : // averageOrder: a bucket with no orders has no average, and
+                // showing zero would drag the line down as if the average had
+                // fallen rather than there being nothing to average.
+                orders > 0
+                ? Math.round(paidTiyn / orders)
+                : null;
+      return {
+        bucket: r.bucket as string,
+        value,
+        paidTiyn,
+        orders,
+        customers: Number(r.customers),
+      };
+    });
+
+    const present = points.filter((p) => p.value !== null).map((p) => p.value as number);
+    const total = points.reduce((sum, p) => sum + p.paidTiyn, 0);
+    const orderCount = points.reduce((sum, p) => sum + p.orders, 0);
+
+    return {
+      metric: query.metric,
+      bucket: query.bucket,
+      /** Money metrics are in tiyn and the page formats them; counts are plain. */
+      unit: query.metric === 'revenue' || query.metric === 'averageOrder' ? 'tiyn' : 'count',
+      from: from.toISOString().slice(0, 10),
+      to: to.toISOString().slice(0, 10),
+      points,
+      summary: {
+        bucketCount: points.length,
+        // Worked out here rather than in the browser so the figure under the
+        // chart and the chart itself can never disagree.
+        max: present.length ? Math.max(...present) : 0,
+        min: present.length ? Math.min(...present) : 0,
+        average: present.length ? Math.round(present.reduce((a, b) => a + b, 0) / present.length) : 0,
+        totalPaidTiyn: total,
+        orderCount,
       },
     };
   }

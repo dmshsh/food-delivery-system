@@ -6,6 +6,7 @@ import { DbModule } from './db/db.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { HealthModule } from './health/health.module';
 import { MenuModule } from './menu/menu.module';
+import { NutritionModule } from './nutrition/nutrition.module';
 import { OrdersModule } from './orders/orders.module';
 import { ProfileModule } from './profile/profile.module';
 import { ReportsModule } from './reports/reports.module';
@@ -20,6 +21,7 @@ import { UniquenessModule } from './uniqueness/uniqueness.module';
     AuthModule,
     ProfileModule,
     MenuModule,
+    NutritionModule,
     OrdersModule,
     ReportsModule,
     BonusModule,

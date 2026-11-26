@@ -264,10 +264,14 @@ await check('a review is refused until the order has been delivered', async () =
 });
 
 await check('once delivered, the customer may review the order exactly once', async () => {
-  for (const status of ['PREPARING', 'READY', 'DELIVERED']) {
+  for (const status of ['PREPARING', 'READY']) {
     const step = await kitchen('PATCH', `/orders/${firstOrderId}/status`, { status });
     assert.equal(step.status, 200, `${status}: ${JSON.stringify(step.data)}`);
   }
+  // Closing the delivery needs the four digits the customer was shown.
+  const code = (await buyer.call('GET', `/orders/${firstOrderId}`)).data.order.confirmationCode;
+  const delivered = await kitchen('PATCH', `/orders/${firstOrderId}/status`, { status: 'DELIVERED', code });
+  assert.equal(delivered.status, 200, JSON.stringify(delivered.data));
   const first = await buyer.call('POST', `/orders/${firstOrderId}/feedback`, { rating: 4, comment: 'Warm and on time.' });
   assert.equal(first.status, 201, JSON.stringify(first.data));
   assert.equal(first.data.order.feedback.rating, 4);

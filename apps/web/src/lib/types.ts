@@ -54,6 +54,15 @@ export interface SessionResponse {
   profile: Profile | null;
 }
 
+export type DietTag =
+  | 'vegetarian'
+  | 'vegan'
+  | 'spicy'
+  | 'contains-nuts'
+  | 'gluten-free'
+  | 'halal'
+  | 'dairy-free';
+
 export interface MenuItem {
   id: number;
   name: string;
@@ -61,6 +70,71 @@ export interface MenuItem {
   category: string;
   priceTiyn: number;
   sortOrder?: number;
+  /** Null where nobody has measured the dish yet. */
+  caloriesKcal: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  ingredients: string;
+  tags: DietTag[];
+}
+
+/** The filters on the dish search. */
+export interface DishFilter {
+  search?: string;
+  maxCalories?: number | '';
+  minCalories?: number | '';
+  maxPriceTiyn?: number | '';
+  tags?: DietTag[];
+  withoutTags?: DietTag[];
+  sort?: 'menu' | 'price' | 'calories';
+}
+
+export interface MenuResponse {
+  items: MenuItem[];
+  filter: {
+    search: string | null;
+    minCalories: number | null;
+    maxCalories: number | null;
+    maxPriceTiyn: number | null;
+    tags: DietTag[];
+    withoutTags: DietTag[];
+    sort: 'menu' | 'price' | 'calories';
+  };
+  bounds: {
+    minPriceTiyn: number;
+    maxPriceTiyn: number;
+    minCalories: number;
+    maxCalories: number;
+    total: number;
+  };
+  availableTags: DietTag[];
+}
+
+// ------------------------------------------------------------- nutrition
+
+export interface Advice {
+  code: string;
+  severity: 'info' | 'note' | 'warning';
+  values: Record<string, number>;
+}
+
+export interface NutritionSummary {
+  caloriesKcal: number;
+  proteinG: number;
+  fatG: number;
+  carbsG: number;
+  unknownDishes: number;
+  incomplete: boolean;
+  shareOfDayPercent: number;
+  energySplit: { protein: number; fat: number; carbs: number };
+  advice: Advice[];
+  referenceDay: { calories: number; protein: number; fat: number; carbs: number };
+}
+
+export interface NutritionResponse {
+  summary: NutritionSummary;
+  dishes: { id: number; name: string; quantity: number; caloriesKcal: number | null; tags: DietTag[] }[];
 }
 
 export interface OrderItem {
@@ -68,6 +142,17 @@ export interface OrderItem {
   name: string;
   quantity: number;
   unitPriceTiyn?: number; // not sent to the kitchen
+  /** Who this line is for in a group order; empty means the order as a whole. */
+  participant?: string;
+  caloriesKcal?: number | null;
+}
+
+/** Who owes what in a group order. */
+export interface OrderSplit {
+  shares: { name: string; itemCount: number; totalTiyn: number }[];
+  unassignedTiyn: number;
+  payableTiyn: number;
+  discountNote: boolean;
 }
 
 export interface Feedback {
@@ -96,6 +181,16 @@ export interface Order {
   discountTiyn?: number;
   payableTiyn?: number;
   feedback?: Feedback | null;
+  isGroup?: boolean;
+  participants?: string[];
+  split?: OrderSplit | null;
+  nutrition?: NutritionSummary;
+  /** Shown to the customer only: the four digits read out at the door. */
+  confirmationCode?: string | null;
+  confirmedAt?: string | null;
+  /** Kitchen view only. */
+  needsConfirmation?: boolean;
+  confirmationAttempts?: number;
 }
 
 export interface OrderResult {
@@ -136,7 +231,9 @@ export interface CreateOrderBody {
   deliveryTime: string; // 'ASAP' or an ISO date-time
   notes: string;
   bonusPoints: number;
-  items: { itemId: number; quantity: number }[];
+  /** Empty for an ordinary order; two or more names for a group order. */
+  participants: string[];
+  items: { itemId: number; quantity: number; participant?: string }[];
 }
 
 export type CheckoutOutcome = 'success' | 'rejected' | 'timeout' | 'lost_reply';
@@ -221,6 +318,12 @@ export interface MenuItemBody {
   category: string;
   priceTiyn: number;
   available: boolean;
+  caloriesKcal: number | null;
+  proteinG: number | null;
+  fatG: number | null;
+  carbsG: number | null;
+  ingredients: string;
+  tags: DietTag[];
 }
 
 export interface AdminUser {
@@ -349,4 +452,34 @@ export interface IpList {
   addresses: BlockedIp[];
   rules: { maxFailures: number; windowMinutes: number; blockMinutes: number };
   suspicious: { ip: string; failures: number; accounts: number; lastAt: string }[];
+}
+
+
+// ------------------------------------------------------------- the chart
+
+export type ChartMetric = 'revenue' | 'orders' | 'averageOrder' | 'customers';
+export type ChartBucket = 'day' | 'week' | 'month';
+
+export interface ChartSeries {
+  metric: ChartMetric;
+  bucket: ChartBucket;
+  unit: 'tiyn' | 'count';
+  from: string;
+  to: string;
+  points: {
+    bucket: string;
+    /** Null where the metric has no meaning for that bucket, such as an average with no orders. */
+    value: number | null;
+    paidTiyn: number;
+    orders: number;
+    customers: number;
+  }[];
+  summary: {
+    bucketCount: number;
+    max: number;
+    min: number;
+    average: number;
+    totalPaidTiyn: number;
+    orderCount: number;
+  };
 }

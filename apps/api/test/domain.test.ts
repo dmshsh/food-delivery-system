@@ -45,10 +45,13 @@ test('order: valid input is normalised and sorted', () => {
   const r = validateOrderInput(base, now);
   assert.equal(r.deliveryAddress, 'Almaty, Abay 1');
   assert.equal(r.deliveryTime, null);
+  // Each line now carries the person it is for; empty means the order as a
+  // whole, which is what an ordinary, ungrouped order looks like.
   assert.deepEqual(r.lines, [
-    { itemId: 1, quantity: 2 },
-    { itemId: 2, quantity: 1 },
+    { itemId: 1, quantity: 2, participant: '' },
+    { itemId: 2, quantity: 1, participant: '' },
   ]);
+  assert.deepEqual(r.participants, []);
 });
 
 test('order: same details give the same hash, any change gives another', () => {

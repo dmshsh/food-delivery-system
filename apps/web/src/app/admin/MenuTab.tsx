@@ -5,7 +5,8 @@ import { useContent } from '@/i18n/content';
 import { useI18n } from '@/i18n/I18nProvider';
 import { formatKzt, translateError } from '@/lib/format';
 import { readDragPayload, reorder, setDragPayload } from '@/lib/dnd';
-import type { AdminMenuItem, MenuItemBody } from '@/lib/types';
+import type { AdminMenuItem, DietTag, MenuItemBody } from '@/lib/types';
+import type { MessageKey } from '@/i18n/dictionaries';
 import {
   useAdminMenuQuery,
   useCreateDishMutation,
@@ -14,7 +15,30 @@ import {
   useUpdateDishMutation,
 } from '@/store/api';
 
-const EMPTY: MenuItemBody = { name: '', description: '', category: 'Meals', priceTiyn: 0, available: true };
+/** Every label a dish can carry, in the order they appear on the form. */
+const ALL_TAGS: DietTag[] = [
+  'vegetarian',
+  'vegan',
+  'gluten-free',
+  'dairy-free',
+  'halal',
+  'spicy',
+  'contains-nuts',
+];
+
+const EMPTY: MenuItemBody = {
+  name: '',
+  description: '',
+  category: 'Meals',
+  priceTiyn: 0,
+  available: true,
+  caloriesKcal: null,
+  proteinG: null,
+  fatG: null,
+  carbsG: null,
+  ingredients: '',
+  tags: [],
+};
 
 export default function MenuTab() {
   const { t, lang } = useI18n();
@@ -191,6 +215,12 @@ function DishForm({
           category: item.category,
           priceTiyn: item.priceTiyn,
           available: item.available,
+          caloriesKcal: item.caloriesKcal,
+          proteinG: item.proteinG,
+          fatG: item.fatG,
+          carbsG: item.carbsG,
+          ingredients: item.ingredients ?? '',
+          tags: item.tags ?? [],
         }
       : EMPTY,
   );
@@ -284,6 +314,83 @@ function DishForm({
           {t('admin.dishShown')}
         </label>
       </div>
+
+      {/*
+        Nutrition. Optional, and empty is a real answer: a dish nobody has
+        weighed says so on the menu rather than claiming to be zero calories.
+      */}
+      <fieldset className="rounded-lg border border-stone-200 p-3">
+        <legend className="px-1 text-sm font-medium text-stone-700">{t('nutrition.title')}</legend>
+        <p className="text-xs text-stone-500">{t('admin.nutritionOptional')}</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-4">
+          {(
+            [
+              ['caloriesKcal', 'admin.dishCalories', 1],
+              ['proteinG', 'admin.dishProtein', 0.1],
+              ['fatG', 'admin.dishFat', 0.1],
+              ['carbsG', 'admin.dishCarbs', 0.1],
+            ] as const
+          ).map(([field, labelKey, step]) => (
+            <div key={field}>
+              <label htmlFor={`dish-${field}`} className="label">{t(labelKey as MessageKey)}</label>
+              <input
+                id={`dish-${field}`}
+                type="number"
+                inputMode="decimal"
+                className="input"
+                min={0}
+                step={step}
+                value={form[field] ?? ''}
+                onChange={(e) =>
+                  setForm({ ...form, [field]: e.target.value === '' ? null : Number(e.target.value) })
+                }
+              />
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3">
+          <label htmlFor="dish-ingredients" className="label">{t('admin.dishIngredients')}</label>
+          <input
+            id="dish-ingredients"
+            className="input"
+            maxLength={400}
+            value={form.ingredients}
+            onChange={(e) => setForm({ ...form, ingredients: e.target.value })}
+          />
+          <p className="mt-1 text-xs text-stone-500">{t('admin.dishIngredientsHint')}</p>
+        </div>
+
+        <div className="mt-3">
+          <p className="label">{t('admin.dishTags')}</p>
+          <div className="flex flex-wrap gap-2">
+            {ALL_TAGS.map((tag) => {
+              const on = form.tags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      tags: on ? form.tags.filter((x) => x !== tag) : [...form.tags, tag],
+                    })
+                  }
+                  className={`rounded-full border px-3 py-1 text-sm ${
+                    on
+                      ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
+                      : 'border-stone-300 bg-white text-stone-700 hover:bg-stone-100'
+                  }`}
+                >
+                  {on ? '✓ ' : ''}
+                  {t(`tag.${tag}` as MessageKey)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </fieldset>
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       <div className="flex gap-2">
         <button className="btn-primary" disabled={busy}>{busy ? t('common.saving') : t('common.save')}</button>
