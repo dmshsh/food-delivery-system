@@ -26,6 +26,7 @@ import {
   clearCart,
   clearDraft,
   draftSaved,
+  namedParticipants,
   setBonusPoints,
   setField,
   setQuantity,
@@ -137,7 +138,9 @@ function Checkout() {
   const willEarn = Math.floor((payable * (earnPercent / 100)) / pointTiyn);
   const points = (n: number) => formatPoints(n, lang, t('common.points'));
 
-  const unassigned = cart.participants.length > 0 && lines.some(({ line }) => !line.participant);
+  const isGroup = cart.participants.length > 0;
+  const groupNames = namedParticipants(cart.participants);
+  const unassigned = isGroup && lines.some(({ line }) => !line.participant);
 
   useEffect(() => {
     if (!frozen && cart.bonusPoints > maxPoints) dispatch(setBonusPoints(maxPoints));
@@ -148,6 +151,7 @@ function Checkout() {
     let d = cart.draft;
     if (!d) {
       if (!cart.deliveryAddress.trim()) return setError(t('checkout.needAddress'));
+      if (isGroup && groupNames.length < 2) return setError(t('group.needTwo'));
       if (unassigned) return setError(t('group.assignAll'));
       d = {
         attemptId: newAttemptId(),
@@ -156,7 +160,7 @@ function Checkout() {
           deliveryTime: cart.deliveryTime ? new Date(cart.deliveryTime).toISOString() : 'ASAP',
           notes: cart.notes.trim(),
           bonusPoints: usedPoints,
-          participants: cart.participants,
+          participants: groupNames,
           items: lines.map(({ line }) => ({
             itemId: line.itemId,
             quantity: line.quantity,

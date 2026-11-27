@@ -9,6 +9,7 @@ import {
   MAX_PARTICIPANTS,
   assignLine,
   clearParticipants,
+  namedParticipants,
   setParticipants,
   splitOne,
   type CartLine,
@@ -47,8 +48,13 @@ export default function GroupOrder({
   function addPerson() {
     const name = draftName.trim();
     if (!name || participants.length >= MAX_PARTICIPANTS) return;
-    if (participants.some((p) => p.toLowerCase() === name.toLowerCase())) return;
-    dispatch(setParticipants([...participants, name]));
+    if (namedParticipants(participants).some((p) => p.toLowerCase() === name.toLowerCase())) return;
+    // Fill the first empty slot before growing the list.
+    const empty = participants.findIndex((p) => !p.trim());
+    const next = [...participants];
+    if (empty >= 0) next[empty] = name;
+    else next.push(name);
+    dispatch(setParticipants(next));
     setDraftName('');
   }
 
@@ -76,7 +82,7 @@ export default function GroupOrder({
     );
   }
 
-  const named = participants.filter(Boolean);
+  const named = namedParticipants(participants);
   const totals = new Map<string, { itemCount: number; totalTiyn: number }>();
   for (const name of named) totals.set(name, { itemCount: 0, totalTiyn: 0 });
   let unassignedTiyn = 0;

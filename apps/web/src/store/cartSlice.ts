@@ -59,6 +59,15 @@ const initialState: CartState = {
 export const MAX_QUANTITY = 20;
 export const MAX_PARTICIPANTS = 10;
 
+/**
+ * The names actually filled in. The cart keeps empty and half-typed slots (a
+ * field the person has not finished yet), so anything that needs real people —
+ * the "for whom" choices, the bill, the order sent to the server — reads this.
+ */
+export function namedParticipants(participants: string[]): string[] {
+  return participants.map((n) => n.trim()).filter(Boolean);
+}
+
 // ---------------------------------------------------------------- selectors
 
 /** Everything in the cart, as a list. */
@@ -163,8 +172,12 @@ const slice = createSlice({
      * should not quietly throw away the food they chose.
      */
     setParticipants(state, action: PayloadAction<string[]>) {
-      const names = action.payload.map((n) => n.trim()).filter(Boolean).slice(0, MAX_PARTICIPANTS);
-      state.participants = names;
+      // Slots are stored as typed, empty ones included: "Order together" starts
+      // with two empty fields, and a field being retyped is briefly empty. Dropping
+      // empty slots here left the list empty, so the group order never opened.
+      const slots = action.payload.slice(0, MAX_PARTICIPANTS);
+      state.participants = slots;
+      const names = namedParticipants(slots);
       for (const line of Object.values(state.lines)) {
         if (line.participant && !names.includes(line.participant)) {
           const target = lineKey(line.itemId, '');
